@@ -60,27 +60,35 @@ class GNNAlgebraSolver:
     def solve(self,
               problem: Union[str, sp.Basic, sp.Eq],
               show_steps: bool = True,
-              return_all_steps: bool = True) -> Union[sp.Basic, List[AlgebraicStep]]:
-        """Solve an algebra problem step by step.
+              return_all_steps: bool = True,
+              use_multiple_strategies: bool = True) -> Union[sp.Basic, List[AlgebraicStep]]:
+        """Solve an algebra problem step by step with multiple fallback strategies.
         
         Args:
             problem: The problem to solve (equation or expression)
             show_steps: Whether to print steps as they're generated
             return_all_steps: Whether to return all steps or just the final answer
+            use_multiple_strategies: Whether to try multiple solving strategies
             
         Returns:
             Final answer or list of all steps
         """
         # Parse problem
         if isinstance(problem, str):
-            problem = sp.parse_expr(problem, transformations='all')
-            if '=' in str(problem):
-                # Parse as equation
-                parts = str(problem).split('=')
-                if len(parts) == 2:
-                    lhs = sp.parse_expr(parts[0])
-                    rhs = sp.parse_expr(parts[1])
-                    problem = Eq(lhs, rhs)
+            try:
+                problem = sp.parse_expr(problem, transformations='all')
+                if '=' in str(problem):
+                    # Parse as equation
+                    parts = str(problem).split('=')
+                    if len(parts) == 2:
+                        lhs = sp.parse_expr(parts[0])
+                        rhs = sp.parse_expr(parts[1])
+                        problem = Eq(lhs, rhs)
+            except Exception as e:
+                logger.error(f"Failed to parse problem '{problem}': {e}")
+                if show_steps:
+                    print(f"Error: Could not parse '{problem}'. Please check the expression format.")
+                return problem if not return_all_steps else [AlgebraicStep(problem, None, f"Parse error: {e}")]
         
         # Initialize solution steps
         steps = [AlgebraicStep(problem, None, "Original problem")]
@@ -89,7 +97,16 @@ class GNNAlgebraSolver:
         if show_steps:
             print(f"Solving: {problem}\n")
         
-        # Solve step by step
+        # Try multiple solving strategies if enabled
+        if use_multiple_strategies:
+            result = self._try_multiple_strategies(current_expr, show_steps)
+            if result:
+                if return_all_steps:
+                    return steps + result
+                else:
+                    return result[-1].expression if result else current_expr
+        
+        # Solve step by step with enhanced fallback
         for step_num in range(self.max_steps):
             # Check if already solved
             if self._is_solved(current_expr):
@@ -101,6 +118,7 @@ class GNNAlgebraSolver:
             next_expr = None
             operation = None
             description = None
+            gnn_failed = False
             
             try:
                 next_expr, operation, description = self._predict_next_step(current_expr)
@@ -113,22 +131,26 @@ class GNNAlgebraSolver:
                     
                     if not is_valid:
                         logger.warning(f"Invalid step predicted: {verification_msg}")
+                        gnn_failed = True
                         next_expr = None  # Force fallback
                 
             except Exception as e:
                 logger.error(f"Error in GNN prediction: {e}")
+                gnn_failed = True
                 next_expr = None  # Force fallback
             
-            # If GNN didn't work or gave invalid step, use fallback
+            # If GNN didn't work or gave invalid step, use enhanced fallback
             if next_expr is None or next_expr == current_expr:
                 try:
-                    next_expr, operation, description = self._fallback_step(current_expr)
+                    next_expr, operation, description = self._enhanced_fallback_step(current_expr, gnn_failed)
                     if next_expr is None:
                         if show_steps:
-                            print(f"Step {step_num + 1}: No more steps available")
+                            print(f"Step {step_num + 1}: No more steps available - GNN and fallback strategies exhausted")
                         break
                 except Exception as e:
-                    logger.error(f"Error in fallback step: {e}")
+                    logger.error(f"Error in enhanced fallback step: {e}")
+                    if show_steps:
+                        print(f"Step {step_num + 1}: Error in fallback - {e}")
                     break
             
             # Add step
@@ -136,7 +158,8 @@ class GNNAlgebraSolver:
             current_expr = next_expr
             
             if show_steps:
-                print(f"Step {step_num + 1}: {next_expr} ({description})")
+                confidence_msg = f" (GNN confidence: {getattr(self, '_last_confidence', 'N/A')})" if hasattr(self, '_last_confidence') else ""
+                print(f"Step {step_num + 1}: {next_expr} ({description}){confidence_msg}")
             
             # Safety check to prevent infinite loops
             if len(steps) > 2:
@@ -632,6 +655,246 @@ class GNNAlgebraSolver:
         except Exception as e:
             logger.error(f"Error applying quadratic formula: {e}")
             return None
+
+    def _try_multiple_strategies(self, 
+                                expr: Union[sp.Basic, sp.Eq], 
+                                show_steps: bool) -> Optional[List[AlgebraicStep]]:
+        """Try multiple solving strategies when GNN fails.
+        
+        Args:
+            expr: Expression to solve
+            show_steps: Whether to show progress
+            
+        Returns:
+            List of steps if successful, None otherwise
+        """
+        strategies = [
+            ("Direct SymPy solve", self._try_direct_solve),
+            ("Step-by-step isolation", self._try_step_isolation),
+            ("Pattern matching", self._try_pattern_matching),
+            ("Simplification chain", self._try_simplification_chain)
+        ]
+        
+        for strategy_name, strategy_func in strategies:
+            if show_steps:
+                print(f"Trying strategy: {strategy_name}")
+            
+            try:
+                result = strategy_func(expr)
+                if result:
+                    if show_steps:
+                        print(f"Strategy '{strategy_name}' succeeded!")
+                    return result
+            except Exception as e:
+                logger.warning(f"Strategy '{strategy_name}' failed: {e}")
+                continue
+        
+        if show_steps:
+            print("All strategies failed - falling back to GNN + basic fallback")
+        return None
+    
+    def _try_direct_solve(self, expr: Union[sp.Basic, sp.Eq]) -> Optional[List[AlgebraicStep]]:
+        """Try to solve directly using SymPy's solve function."""
+        if not isinstance(expr, Eq):
+            return None
+        
+        try:
+            variables = list(expr.free_symbols)
+            if not variables:
+                return None
+            
+            solutions = solve(expr, variables[0])
+            if solutions:
+                if isinstance(solutions, list) and len(solutions) == 1:
+                    solution = solutions[0]
+                    result = Eq(variables[0], solution)
+                    return [AlgebraicStep(result, "DIRECT_SOLVE", f"Solved directly: {variables[0]} = {solution}")]
+                elif not isinstance(solutions, list):
+                    result = Eq(variables[0], solutions)
+                    return [AlgebraicStep(result, "DIRECT_SOLVE", f"Solved directly: {variables[0]} = {solutions}")]
+        except:
+            pass
+        
+        return None
+    
+    def _try_step_isolation(self, expr: Union[sp.Basic, sp.Eq]) -> Optional[List[AlgebraicStep]]:
+        """Try systematic variable isolation."""
+        if not isinstance(expr, Eq):
+            return None
+        
+        steps = []
+        current = expr
+        variables = list(expr.free_symbols)
+        
+        if not variables:
+            return None
+        
+        var = variables[0]
+        
+        # Try to isolate the variable step by step
+        for _ in range(5):  # Limit steps to prevent infinite loops
+            if self._is_solved(current):
+                break
+            
+            # Try to move constants
+            if isinstance(current.lhs, sp.Add):
+                for term in current.lhs.args:
+                    if var not in term.free_symbols and term != 0:
+                        new_lhs = current.lhs - term
+                        new_rhs = current.rhs - term
+                        new_expr = Eq(new_lhs, new_rhs)
+                        steps.append(AlgebraicStep(new_expr, "MOVE_CONSTANT", f"Subtract {term} from both sides"))
+                        current = new_expr
+                        break
+            
+            # Try to handle coefficients
+            if current.lhs.is_Mul:
+                var_coeff = None
+                for arg in current.lhs.args:
+                    if arg == var:
+                        continue
+                    elif var not in arg.free_symbols:
+                        var_coeff = arg if var_coeff is None else var_coeff * arg
+                
+                if var_coeff is not None and var_coeff != 1:
+                    new_lhs = current.lhs / var_coeff
+                    new_rhs = current.rhs / var_coeff
+                    new_expr = Eq(new_lhs, new_rhs)
+                    steps.append(AlgebraicStep(new_expr, "DIVIDE_COEFFICIENT", f"Divide both sides by {var_coeff}"))
+                    current = new_expr
+                    continue
+            
+            # Try simplification
+            simplified_lhs = sp.simplify(current.lhs)
+            simplified_rhs = sp.simplify(current.rhs)
+            if simplified_lhs != current.lhs or simplified_rhs != current.rhs:
+                new_expr = Eq(simplified_lhs, simplified_rhs)
+                steps.append(AlgebraicStep(new_expr, "SIMPLIFY", "Simplify both sides"))
+                current = new_expr
+                continue
+            
+            break
+        
+        return steps if steps else None
+    
+    def _try_pattern_matching(self, expr: Union[sp.Basic, sp.Eq]) -> Optional[List[AlgebraicStep]]:
+        """Try pattern matching for common algebraic forms."""
+        if not isinstance(expr, Eq):
+            return None
+        
+        # Check for quadratic form
+        try:
+            standard_form = expr.lhs - expr.rhs
+            variables = list(standard_form.free_symbols)
+            if len(variables) == 1:
+                var = variables[0]
+                coeffs = sp.Poly(standard_form, var).all_coeffs()
+                
+                if len(coeffs) == 3:  # ax² + bx + c
+                    a, b, c = coeffs
+                    if a != 0:
+                        discriminant = b**2 - 4*a*c
+                        if discriminant >= 0:
+                            sqrt_disc = sp.sqrt(discriminant)
+                            x1 = (-b + sqrt_disc) / (2*a)
+                            x2 = (-b - sqrt_disc) / (2*a)
+                            
+                            if x1 == x2:
+                                result = Eq(var, x1)
+                                return [AlgebraicStep(result, "QUADRATIC_FORMULA", f"Applied quadratic formula: {var} = {x1}")]
+                            else:
+                                result = Eq(var, sp.FiniteSet(x1, x2))
+                                return [AlgebraicStep(result, "QUADRATIC_FORMULA", f"Applied quadratic formula: {var} = {x1} or {var} = {x2}")]
+        except:
+            pass
+        
+        return None
+    
+    def _try_simplification_chain(self, expr: Union[sp.Basic, sp.Eq]) -> Optional[List[AlgebraicStep]]:
+        """Try a chain of simplifications."""
+        steps = []
+        current = expr
+        
+        # Try expansion
+        if isinstance(current, Eq):
+            expanded_lhs = sp.expand(current.lhs)
+            expanded_rhs = sp.expand(current.rhs)
+            if expanded_lhs != current.lhs or expanded_rhs != current.rhs:
+                new_expr = Eq(expanded_lhs, expanded_rhs)
+                steps.append(AlgebraicStep(new_expr, "EXPAND", "Expand both sides"))
+                current = new_expr
+        
+        # Try simplification
+        if isinstance(current, Eq):
+            simplified_lhs = sp.simplify(current.lhs)
+            simplified_rhs = sp.simplify(current.rhs)
+            if simplified_lhs != current.lhs or simplified_rhs != current.rhs:
+                new_expr = Eq(simplified_lhs, simplified_rhs)
+                steps.append(AlgebraicStep(new_expr, "SIMPLIFY", "Simplify both sides"))
+                current = new_expr
+        
+        # Try factoring
+        if isinstance(current, Eq):
+            try:
+                factored_lhs = sp.factor(current.lhs)
+                factored_rhs = sp.factor(current.rhs)
+                if factored_lhs != current.lhs or factored_rhs != current.rhs:
+                    new_expr = Eq(factored_lhs, factored_rhs)
+                    steps.append(AlgebraicStep(new_expr, "FACTOR", "Factor both sides"))
+                    current = new_expr
+            except:
+                pass
+        
+        return steps if steps else None
+    
+    def _enhanced_fallback_step(self,
+                               expr: Union[sp.Basic, sp.Eq],
+                               gnn_failed: bool = False) -> Tuple[Optional[sp.Basic], Optional[str], str]:
+        """Enhanced fallback step with multiple strategies.
+        
+        Args:
+            expr: Current expression or equation
+            gnn_failed: Whether the GNN prediction failed
+            
+        Returns:
+            Tuple of (next_expression, operation_name, description)
+        """
+        if gnn_failed:
+            # Try more aggressive fallback strategies when GNN fails
+            return self._aggressive_fallback(expr)
+        else:
+            # Use standard fallback
+            return self._fallback_step(expr)
+    
+    def _aggressive_fallback(self, expr: Union[sp.Basic, sp.Eq]) -> Tuple[Optional[sp.Basic], Optional[str], str]:
+        """More aggressive fallback when GNN completely fails."""
+        if isinstance(expr, Eq):
+            # Try to solve directly
+            try:
+                variables = list(expr.free_symbols)
+                if variables:
+                    solutions = solve(expr, variables[0])
+                    if solutions:
+                        if isinstance(solutions, list) and len(solutions) == 1:
+                            solution = solutions[0]
+                            result = Eq(variables[0], solution)
+                            return result, "DIRECT_SOLVE", f"Solved directly using SymPy: {variables[0]} = {solution}"
+                        elif not isinstance(solutions, list):
+                            result = Eq(variables[0], solutions)
+                            return result, "DIRECT_SOLVE", f"Solved directly using SymPy: {variables[0]} = {solutions}"
+            except Exception as e:
+                logger.warning(f"Direct solve failed: {e}")
+            
+            # Try extreme simplification
+            try:
+                extreme_simplified = Eq(sp.simplify(expr.lhs), sp.simplify(expr.rhs))
+                if extreme_simplified != expr:
+                    return extreme_simplified, "EXTREME_SIMPLIFY", "Applied extreme simplification"
+            except:
+                pass
+        
+        # If all else fails, return the original expression
+        return expr, "NO_OPERATION", "GNN failed and no fallback strategy worked"
 
 
 class InteractiveSolver:
