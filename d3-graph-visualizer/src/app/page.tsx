@@ -306,40 +306,31 @@ export default function Home() {
   // GNN-powered step-by-step solving
   const handleGNNSolve = async () => {
     if (isGnnSolving) return;
-    
     setIsGnnSolving(true);
     setEvaluationMessage('🧠 GNN analyzing expression...');
-    
+    setShowGnnVisualizer(false);
+    setGnnSteps([]);
+    setCurrentGnnStep(0);
     try {
-      // Get all steps from GNN solver
+      // Use backend API for all step-by-step solving
       const result = await gnnSolver.solveStepByStep(expression);
       const steps = result.steps;
       setGnnSteps(steps);
       setCurrentGnnStep(0);
-      
-      if (steps.length === 0) {
+      if (!steps || steps.length === 0) {
         setEvaluationMessage('No solution steps found for this expression.');
         setIsGnnSolving(false);
         return;
       }
-      
       setEvaluationMessage(`🧠 GNN found ${steps.length} solution steps. Starting step-by-step solving...`);
       setShowGnnVisualizer(true);
-      
-      // Animate through each step with better feedback
+      // Animate through each step
       for (let i = 0; i < steps.length; i++) {
         setCurrentGnnStep(i);
         const step = steps[i];
-        setEvaluationMessage(`Step ${i + 1}/${steps.length}: ${step.operation || 'Unknown'} - ${step.explanation} (${((step.confidence || 0) * 100).toFixed(0)}% confidence)`);
-        
-        // Update the expression display to show the current step
-        if (step.expression !== expression) {
-          setExpression(step.expression);
-        }
-        
-        await wait(2000); // Longer pause to see the transformation
+        setEvaluationMessage(`Step ${i + 1}/${steps.length}: ${step.operation || 'Unknown'} - ${step.explanation}`);
+        await wait(1200);
       }
-      
       // Show final result
       if (steps.length > 0) {
         const lastStep = steps[steps.length - 1];
@@ -349,12 +340,9 @@ export default function Home() {
           setEvaluationMessage(`✅ GNN solution complete! Final expression: ${lastStep.expression}`);
         }
       }
-      
-    } catch (error) {
-      console.error('GNN solving error:', error);
+    } catch (error: any) {
       setEvaluationMessage('An error occurred during GNN solving.');
     }
-    
     setIsGnnSolving(false);
   };
 
