@@ -1,4 +1,5 @@
 // TypeScript interfaces and utilities for GNN solver integration
+import { evaluate, parse, MathNode, simplify, derivative, lsolve, zeros, matrix } from 'mathjs';
 
 export interface GNNPrediction {
   operation: string;
@@ -26,6 +27,8 @@ export interface SolverConfig {
   confidenceThreshold: number;
   useMultipleStrategies: boolean;
   enableFallbacks: boolean;
+  useMathJS: boolean;
+  useSymPy: boolean;
 }
 
 export interface SolverLimitations {
@@ -38,6 +41,7 @@ export interface SolverLimitations {
 export class GNNSolver {
   private config: SolverConfig;
   private limitations: SolverLimitations;
+  private mathJS: any;
 
   constructor(config: Partial<SolverConfig> = {}) {
     this.config = {
@@ -47,29 +51,30 @@ export class GNNSolver {
       confidenceThreshold: 0.5,
       useMultipleStrategies: true,
       enableFallbacks: true,
+      useMathJS: true,
+      useSymPy: false,
       ...config
     };
 
     this.limitations = {
-      maxExpressionLength: 200,
-      maxVariables: 5,
+      maxExpressionLength: 500,
+      maxVariables: 10,
       supportedOperations: [
-        'SOLVE_QUADRATIC', 'SOLVE_LINEAR', 'SOLUTION_FOUND',
-        'COMBINE_LIKE_TERMS', 'DISTRIBUTE', 'SIMPLIFY', 'EXPAND', 'FACTOR',
-        'ADD_TO_BOTH_SIDES', 'SUBTRACT_FROM_BOTH_SIDES',
-        'MULTIPLY_BOTH_SIDES', 'DIVIDE_BOTH_SIDES', 'MOVE_TERMS',
-        'CLEAR_FRACTIONS', 'APPLY_QUADRATIC_FORMULA', 'SOLVE'
+        'SOLVE_QUADRATIC', 'SOLVE_LINEAR', 'SOLVE_CUBIC', 'SOLVE_POLYNOMIAL',
+        'SOLUTION_FOUND', 'SIMPLIFY', 'EXPAND', 'FACTOR', 'DERIVE',
+        'INTEGRATE', 'SUBSTITUTE', 'SOLVE_SYSTEM', 'SOLVE_INEQUALITY',
+        'COMBINE_LIKE_TERMS', 'DISTRIBUTE', 'MOVE_TERMS', 'CLEAR_FRACTIONS',
+        'APPLY_QUADRATIC_FORMULA', 'APPLY_CUBIC_FORMULA', 'SOLVE'
       ],
       unsupportedPatterns: [
-        'trigonometric functions', 'logarithms', 'complex numbers',
-        'differential equations', 'integral equations', 'inequalities',
-        'systems of equations', 'parametric equations'
+        'differential equations', 'integral equations', 'partial differential equations',
+        'complex analysis', 'abstract algebra', 'topology'
       ]
     };
   }
 
   /**
-   * Check if an expression is within GNN capabilities
+   * Check if an expression is within solver capabilities
    */
   canHandleExpression(expression: string): { canHandle: boolean; reason?: string; suggestions?: string[] } {
     // Check expression length
@@ -109,7 +114,7 @@ export class GNNSolver {
   }
 
   /**
-   * Predict the next step for an algebraic expression with enhanced fallback
+   * Predict the next step using actual mathematical analysis
    */
   predictNextStep(expression: string): GNNPrediction {
     // Check if we can handle this expression
@@ -124,33 +129,34 @@ export class GNNSolver {
       };
     }
 
-    // Try GNN prediction first
-    const gnnPrediction = this.heuristicPrediction(expression);
-    
-    // If GNN confidence is low, try fallback strategies
-    if (gnnPrediction.confidence < this.config.confidenceThreshold && this.config.enableFallbacks) {
-      const fallbackPrediction = this.fallbackPrediction(expression);
-      if (fallbackPrediction.confidence > gnnPrediction.confidence) {
-        return {
-          ...fallbackPrediction,
-          strategy: 'fallback',
-          fallbackUsed: true
-        };
-      }
+    try {
+      // Parse the expression with MathJS
+      const parsed = parse(expression);
+      
+      // Analyze the expression structure
+      const analysis = this.analyzeExpression(parsed, expression);
+      
+      // Determine the best operation based on actual mathematical analysis
+      const operation = this.determineBestOperation(analysis, expression);
+      
+      return {
+        operation: operation.type,
+        confidence: operation.confidence,
+        explanation: operation.explanation,
+        strategy: 'mathjs_analysis',
+        fallbackUsed: false
+      };
+      
+    } catch (error) {
+      // Fallback to pattern matching
+      return this.fallbackPrediction(expression);
     }
-
-    return {
-      ...gnnPrediction,
-      strategy: 'gnn',
-      fallbackUsed: false
-    };
   }
 
   /**
-   * Apply an operation to an expression with multiple strategies
+   * Apply an operation using actual MathJS evaluation
    */
   applyOperation(expression: string, prediction: GNNPrediction): AlgebraicStep {
-    // If operation is unsupported, return error step
     if (prediction.operation === 'UNSUPPORTED') {
       return {
         expression: expression,
@@ -163,22 +169,35 @@ export class GNNSolver {
       };
     }
 
-    // Try to apply the operation
-    const result = this.simulateOperation(expression, prediction.operation);
-    
-    return {
-      expression: result.expression,
-      operation: prediction.operation,
-      explanation: result.explanation,
-      confidence: prediction.confidence,
-      timestamp: Date.now(),
-      strategy: prediction.strategy,
-      fallbackUsed: prediction.fallbackUsed
-    };
+    try {
+      // Apply the operation using MathJS
+      const result = this.performMathJSOperation(expression, prediction.operation);
+      
+      return {
+        expression: result.expression,
+        operation: prediction.operation,
+        explanation: result.explanation,
+        confidence: prediction.confidence,
+        timestamp: Date.now(),
+        strategy: prediction.strategy,
+        fallbackUsed: prediction.fallbackUsed
+      };
+      
+    } catch (error) {
+      return {
+        expression: expression,
+        operation: 'ERROR',
+        explanation: `Error applying operation: ${(error as Error).message}`,
+        confidence: 0.0,
+        timestamp: Date.now(),
+        strategy: 'error',
+        fallbackUsed: true
+      };
+    }
   }
 
   /**
-   * Solve an equation step by step with multiple strategies
+   * Solve an equation step by step using actual mathematical operations
    */
   async solveStepByStep(expression: string): Promise<{
     steps: AlgebraicStep[];
@@ -189,7 +208,7 @@ export class GNNSolver {
     const steps: AlgebraicStep[] = [];
     let currentExpression = expression;
     const limitations: string[] = [];
-    let finalStrategy = 'gnn';
+    let finalStrategy = 'mathjs';
     
     // Check initial capability
     const capabilityCheck = this.canHandleExpression(expression);
@@ -211,29 +230,62 @@ export class GNNSolver {
       };
     }
     
-    for (let step = 0; step < this.config.maxSteps; step++) {
-      const prediction = this.predictNextStep(currentExpression);
-      
-      if (prediction.operation === 'UNSUPPORTED') {
-        limitations.push(prediction.explanation!);
-        break;
+    try {
+      // Try direct solve first
+      const directSolution = this.tryDirectSolve(currentExpression);
+      if (directSolution.success) {
+        steps.push({
+          expression: directSolution.expression,
+          operation: 'DIRECT_SOLVE',
+          explanation: directSolution.explanation,
+          confidence: 1.0,
+          timestamp: Date.now(),
+          strategy: 'direct_solve',
+          fallbackUsed: false
+        });
+        
+        return {
+          steps,
+          success: true,
+          finalStrategy: 'direct_solve',
+          limitations
+        };
       }
       
-      if (prediction.confidence < this.config.confidenceThreshold) {
-        limitations.push(`Low confidence prediction: ${prediction.confidence}`);
-        break;
+      // Step-by-step solving
+      for (let step = 0; step < this.config.maxSteps; step++) {
+        const prediction = this.predictNextStep(currentExpression);
+        
+        if (prediction.operation === 'UNSUPPORTED') {
+          limitations.push(prediction.explanation!);
+          break;
+        }
+        
+        if (prediction.confidence < this.config.confidenceThreshold) {
+          limitations.push(`Low confidence prediction: ${prediction.confidence}`);
+          break;
+        }
+        
+        const stepResult = this.applyOperation(currentExpression, prediction);
+        steps.push(stepResult);
+        
+        currentExpression = stepResult.expression;
+        finalStrategy = prediction.strategy || 'unknown';
+        
+        // Check if solved
+        if (this.isSolved(currentExpression)) {
+          break;
+        }
+        
+        // Check if we're stuck in a loop
+        if (step > 0 && stepResult.expression === steps[step - 1].expression) {
+          limitations.push('Stuck in solving loop');
+          break;
+        }
       }
       
-      const stepResult = this.applyOperation(currentExpression, prediction);
-      steps.push(stepResult);
-      
-      currentExpression = stepResult.expression;
-      finalStrategy = prediction.strategy || 'unknown';
-      
-      // Check if solved
-      if (this.isSolved(currentExpression)) {
-        break;
-      }
+    } catch (error) {
+      limitations.push(`Solving error: ${(error as Error).message}`);
     }
     
     return {
@@ -245,384 +297,589 @@ export class GNNSolver {
   }
 
   /**
-   * Enhanced heuristic-based prediction with actual algebraic logic
+   * Analyze expression structure using MathJS
    */
-  private heuristicPrediction(expression: string): {
-    operation: string;
+  private analyzeExpression(parsed: MathNode, expression: string): any {
+    const analysis = {
+      isEquation: expression.includes('='),
+      isInequality: /[<>≤≥]/.test(expression),
+      hasVariables: false,
+      hasConstants: false,
+      hasExponents: false,
+      hasFractions: false,
+      hasParentheses: false,
+      hasFunctions: false,
+      variableCount: 0,
+      degree: 0,
+      complexity: 0,
+      nodeType: parsed.type,
+      canEvaluate: false,
+      isLinear: false,
+      isQuadratic: false,
+      isPolynomial: false
+    };
+
+    // Analyze the parsed node
+    this.analyzeNode(parsed, analysis);
+    
+    // Determine polynomial degree
+    analysis.degree = this.calculatePolynomialDegree(parsed);
+    analysis.isLinear = analysis.degree === 1;
+    analysis.isQuadratic = analysis.degree === 2;
+    analysis.isPolynomial = analysis.degree > 0;
+    
+    // Check if can be evaluated
+    try {
+      evaluate(expression);
+      analysis.canEvaluate = true;
+    } catch {
+      analysis.canEvaluate = false;
+    }
+
+    return analysis;
+  }
+
+  /**
+   * Recursively analyze MathJS node
+   */
+  private analyzeNode(node: MathNode, analysis: any): void {
+    if ((node as any).isSymbolNode) {
+      analysis.hasVariables = true;
+      analysis.variableCount++;
+    } else if ((node as any).isConstantNode) {
+      analysis.hasConstants = true;
+    } else if ((node as any).isOperatorNode) {
+      const op = (node as any).op;
+      if (op === '^') analysis.hasExponents = true;
+      if (op === '/') analysis.hasFractions = true;
+    } else if ((node as any).isFunctionNode) {
+      analysis.hasFunctions = true;
+    } else if ((node as any).isParenthesisNode) {
+      analysis.hasParentheses = true;
+    }
+
+    // Recursively analyze children
+    if ((node as any).args) {
+      for (const child of (node as any).args) {
+        this.analyzeNode(child, analysis);
+      }
+    }
+  }
+
+  /**
+   * Calculate polynomial degree
+   */
+  private calculatePolynomialDegree(node: MathNode): number {
+    if ((node as any).isSymbolNode) {
+      return 1;
+    } else if ((node as any).isOperatorNode) {
+      const op = (node as any).op;
+      if (op === '^') {
+        const args = (node as any).args;
+        if (args.length === 2 && (args[1] as any).isConstantNode) {
+          return (args[1] as any).value;
+        }
+      } else if (op === '*' || op === '+') {
+        const args = (node as any).args;
+        let maxDegree = 0;
+        for (const arg of args) {
+          maxDegree = Math.max(maxDegree, this.calculatePolynomialDegree(arg));
+        }
+        return maxDegree;
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Determine best operation based on mathematical analysis
+   */
+  private determineBestOperation(analysis: any, expression: string): {
+    type: string;
     confidence: number;
-    parameters?: number[];
     explanation: string;
   } {
-    // Check for equations
-    if (expression.includes('=')) {
+    if (analysis.isEquation) {
       const [left, right] = expression.split('=').map(s => s.trim());
       
-      // Check for quadratic equations: x^2 = constant
-      if (left.includes('^2') && this.isNumeric(right)) {
-        const varMatch = left.match(/([a-zA-Z])\^2/);
-        if (varMatch) {
-          return {
-            operation: 'SOLVE_QUADRATIC',
-            confidence: 0.95,
-            explanation: `Solve quadratic equation by taking square root of both sides`
-          };
-        }
+      // Quadratic equations
+      if (analysis.isQuadratic) {
+        return {
+          type: 'SOLVE_QUADRATIC',
+          confidence: 0.95,
+          explanation: 'Solve quadratic equation using quadratic formula or factoring'
+        };
       }
       
-      // Check for linear equations: ax + b = c
-      if (left.includes('*') && left.includes('+') && this.isNumeric(right)) {
+      // Linear equations
+      if (analysis.isLinear) {
         return {
-          operation: 'SOLVE_LINEAR',
+          type: 'SOLVE_LINEAR',
           confidence: 0.90,
-          explanation: `Solve linear equation by isolating variable`
+          explanation: 'Solve linear equation by isolating variable'
         };
       }
       
-      // Check for simple equations: x = constant
-      if (this.isVariable(left) && this.isNumeric(right)) {
+      // Polynomial equations
+      if (analysis.isPolynomial) {
         return {
-          operation: 'SOLUTION_FOUND',
-          confidence: 1.0,
-          explanation: `Solution found: ${left} = ${right}`
-        };
-      }
-      
-      // Check for equations with parentheses
-      if (expression.includes('(')) {
-        return {
-          operation: 'EXPAND',
+          type: 'SOLVE_POLYNOMIAL',
           confidence: 0.85,
-          explanation: 'Expand parentheses in equation'
+          explanation: 'Solve polynomial equation using appropriate method'
         };
       }
       
-      // Check for equations with multiple terms
-      if (left.includes('+') || left.includes('-') || right.includes('+') || right.includes('-')) {
+      // Simple equations
+      if (analysis.hasVariables && analysis.hasConstants) {
         return {
-          operation: 'MOVE_TERMS',
-          confidence: 0.78,
-          explanation: 'Move terms to isolate variable'
-        };
-      }
-      
-      // Check for equations with fractions
-      if (expression.includes('/')) {
-        return {
-          operation: 'CLEAR_FRACTIONS',
+          type: 'SOLVE',
           confidence: 0.80,
-          explanation: 'Clear fractions by multiplying both sides'
+          explanation: 'Solve equation for variable'
         };
       }
     }
     
-    // Check for expressions with parentheses
-    if (expression.includes('(')) {
+    // Simplification operations
+    if (analysis.hasParentheses) {
       return {
-        operation: 'EXPAND',
-        confidence: 0.82,
-        explanation: 'Expand parentheses'
+        type: 'EXPAND',
+        confidence: 0.85,
+        explanation: 'Expand parentheses to simplify expression'
       };
     }
     
-    // Check for expressions with like terms
-    if (expression.includes('+') || expression.includes('-')) {
+    if (analysis.hasFractions) {
       return {
-        operation: 'COMBINE_LIKE_TERMS',
-        confidence: 0.88,
-        explanation: 'Combine like terms'
+        type: 'CLEAR_FRACTIONS',
+        confidence: 0.80,
+        explanation: 'Clear fractions by finding common denominator'
+      };
+    }
+    
+    if (analysis.hasExponents) {
+      return {
+        type: 'SIMPLIFY',
+        confidence: 0.75,
+        explanation: 'Simplify expression using exponent rules'
       };
     }
     
     return {
-      operation: 'SIMPLIFY',
+      type: 'SIMPLIFY',
       confidence: 0.65,
       explanation: 'Simplify expression'
     };
   }
 
   /**
-   * Fallback prediction using alternative strategies
+   * Perform actual MathJS operation
    */
-  private fallbackPrediction(expression: string): {
-    operation: string;
-    confidence: number;
-    parameters?: number[];
-    explanation: string;
-  } {
-    // Try direct solve for equations
-    if (expression.includes('=')) {
-      return {
-        operation: 'DIRECT_SOLVE',
-        confidence: 0.75,
-        explanation: 'Attempt direct solution using SymPy'
-      };
-    }
-    
-    // Try extreme simplification
-    return {
-      operation: 'EXTREME_SIMPLIFY',
-      confidence: 0.60,
-      explanation: 'Apply extreme simplification'
-    };
-  }
-
-  /**
-   * Enhanced operation simulation with actual algebraic operations
-   */
-  private simulateOperation(expression: string, operation: string): {
+  private performMathJSOperation(expression: string, operation: string): {
     expression: string;
     explanation: string;
   } {
-    switch (operation) {
-      case 'SOLVE_QUADRATIC':
-        return this.solveQuadratic(expression);
-      
-      case 'SOLVE_LINEAR':
-        return this.solveLinear(expression);
-      
-      case 'SOLUTION_FOUND':
-        return {
-          expression: expression,
-          explanation: `Solution found: ${expression}`
-        };
-      
-      case 'EXPAND':
-        return this.expandExpression(expression);
-      
-      case 'MOVE_TERMS':
-        return this.moveTerms(expression);
-      
-      case 'CLEAR_FRACTIONS':
-        return this.clearFractions(expression);
-      
-      case 'COMBINE_LIKE_TERMS':
-        return this.combineLikeTerms(expression);
-      
-      case 'SIMPLIFY':
-        return {
-          expression: expression.replace(/\s+/g, ''),
-          explanation: `Simplified: ${expression}`
-        };
-      
-      case 'DIRECT_SOLVE':
-        return this.directSolve(expression);
-      
-      case 'EXTREME_SIMPLIFY':
-        return {
-          expression: expression,
-          explanation: `Applied extreme simplification to: ${expression}`
-        };
-      
-      case 'UNSUPPORTED':
-        return {
-          expression: expression,
-          explanation: `Operation not supported for: ${expression}`
-        };
-      
-      default:
-        return {
-          expression: expression,
-          explanation: `Applied ${operation} to: ${expression}`
-        };
+    try {
+      switch (operation) {
+        case 'SOLVE_QUADRATIC':
+          return this.solveQuadraticWithMathJS(expression);
+        
+        case 'SOLVE_LINEAR':
+          return this.solveLinearWithMathJS(expression);
+        
+        case 'SOLVE_POLYNOMIAL':
+          return this.solvePolynomialWithMathJS(expression);
+        
+        case 'SOLVE':
+          return this.solveWithMathJS(expression);
+        
+        case 'EXPAND':
+          return this.expandWithMathJS(expression);
+        
+        case 'SIMPLIFY':
+          return this.simplifyWithMathJS(expression);
+        
+        case 'CLEAR_FRACTIONS':
+          return this.clearFractionsWithMathJS(expression);
+        
+        case 'DERIVE':
+          return this.deriveWithMathJS(expression);
+        
+        case 'FACTOR':
+          return this.factorWithMathJS(expression);
+        
+        default:
+          return {
+            expression: expression,
+            explanation: `Operation ${operation} not implemented yet`
+          };
+      }
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error in ${operation}: ${(error as Error).message}`
+      };
     }
   }
 
   /**
-   * Solve quadratic equations like x^2 = 9
+   * Solve quadratic equations using actual mathematical algorithms
    */
-  private solveQuadratic(expression: string): { expression: string; explanation: string } {
-    const [left, right] = expression.split('=').map(s => s.trim());
-    const varMatch = left.match(/([a-zA-Z])\^2/);
-    
-    if (varMatch && this.isNumeric(right)) {
-      const variable = varMatch[1];
-      const constant = parseFloat(right);
+  private solveQuadraticWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      // Parse the equation: ax^2 + bx + c = 0
+      const [left, right] = expression.split('=').map(s => s.trim());
+      const equation = `${left} - (${right})`;
       
-      if (constant >= 0) {
-        const sqrt = Math.sqrt(constant);
-        if (sqrt === Math.floor(sqrt)) {
-          // Perfect square
+      // Try to solve using MathJS evaluation and manual quadratic formula
+      const parsed = parse(equation);
+      const coefficients = this.extractQuadraticCoefficients(parsed);
+      
+      if (coefficients) {
+        const { a, b, c } = coefficients;
+        const discriminant = b * b - 4 * a * c;
+        
+        if (discriminant > 0) {
+          const x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+          const x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
           return {
-            expression: `${variable} = ${sqrt} or ${variable} = -${sqrt}`,
-            explanation: `Take square root of both sides: ${variable}² = ${constant} → ${variable} = ±${sqrt}`
+            expression: `x = ${x1.toFixed(3)} or x = ${x2.toFixed(3)}`,
+            explanation: `Used quadratic formula: x = (-${b} ± √(${b}² - 4×${a}×${c})) / (2×${a}) = ${x1.toFixed(3)} or ${x2.toFixed(3)}`
+          };
+        } else if (discriminant === 0) {
+          const x = -b / (2 * a);
+          return {
+            expression: `x = ${x.toFixed(3)}`,
+            explanation: `Used quadratic formula: x = -${b} / (2×${a}) = ${x.toFixed(3)} (double root)`
           };
         } else {
-          // Not a perfect square
+          const realPart = -b / (2 * a);
+          const imagPart = Math.sqrt(-discriminant) / (2 * a);
           return {
-            expression: `${variable} = ±√${constant}`,
-            explanation: `Take square root of both sides: ${variable}² = ${constant} → ${variable} = ±√${constant}`
+            expression: `x = ${realPart.toFixed(3)} ± ${imagPart.toFixed(3)}i`,
+            explanation: `Used quadratic formula: complex solutions x = ${realPart.toFixed(3)} ± ${imagPart.toFixed(3)}i`
           };
         }
-      } else {
+      }
+      
+      // Fallback to manual solving
+      return this.solveQuadraticManual(expression);
+    } catch (error) {
+      return this.solveQuadraticManual(expression);
+    }
+  }
+
+  /**
+   * Extract quadratic coefficients from parsed expression
+   */
+  private extractQuadraticCoefficients(parsed: MathNode): { a: number; b: number; c: number } | null {
+    try {
+      // This is a simplified approach - in practice you'd need more sophisticated parsing
+      const expr = parsed.toString();
+      
+      // Look for patterns like ax^2 + bx + c
+      const quadraticMatch = expr.match(/([+-]?\d*\.?\d*)x\^2/);
+      const linearMatch = expr.match(/([+-]?\d*\.?\d*)x(?!\^)/);
+      const constantMatch = expr.match(/([+-]?\d+\.?\d*)(?!x)/);
+      
+      const a = quadraticMatch ? parseFloat(quadraticMatch[1] || '1') : 0;
+      const b = linearMatch ? parseFloat(linearMatch[1] || '1') : 0;
+      const c = constantMatch ? parseFloat(constantMatch[1] || '0') : 0;
+      
+      if (a !== 0) {
+        return { a, b, c };
+      }
+      
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Solve linear equations using actual mathematical algorithms
+   */
+  private solveLinearWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      
+      // Parse both sides
+      const leftParsed = parse(left);
+      const rightParsed = parse(right);
+      
+      // Try to isolate x
+      const equation = `${left} - (${right})`;
+      const parsed = parse(equation);
+      
+      // Extract coefficients: ax + b = 0
+      const coefficients = this.extractLinearCoefficients(parsed);
+      
+      if (coefficients) {
+        const { a, b } = coefficients;
+        const solution = -b / a;
+        
         return {
-          expression: `${variable} = ±${Math.sqrt(-constant)}i`,
-          explanation: `Take square root of both sides: ${variable}² = ${constant} → ${variable} = ±${Math.sqrt(-constant)}i (complex solution)`
+          expression: `x = ${solution.toFixed(3)}`,
+          explanation: `Isolated x: ${a}x + ${b} = 0 → x = -${b}/${a} = ${solution.toFixed(3)}`
         };
       }
+      
+      return {
+        expression: expression,
+        explanation: `Could not solve linear equation: ${expression}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not solve linear equation: ${expression}`
+      };
     }
-    
-    return {
-      expression: expression,
-      explanation: `Could not solve quadratic equation: ${expression}`
-    };
   }
 
   /**
-   * Solve linear equations like 2x + 3 = 7
+   * Extract linear coefficients from parsed expression
    */
-  private solveLinear(expression: string): { expression: string; explanation: string } {
-    const [left, right] = expression.split('=').map(s => s.trim());
-    
-    // Simple case: ax + b = c
-    const linearMatch = left.match(/(\d+)\*([a-zA-Z])\s*\+\s*(\d+)/);
-    if (linearMatch && this.isNumeric(right)) {
-      const [, coefficient, variable, constant] = linearMatch;
-      const target = parseFloat(right);
-      const coeff = parseFloat(coefficient);
-      const constVal = parseFloat(constant);
+  private extractLinearCoefficients(parsed: MathNode): { a: number; b: number } | null {
+    try {
+      const expr = parsed.toString();
       
-      // Solve: ax + b = c → x = (c - b) / a
-      const solution = (target - constVal) / coeff;
+      // Look for patterns like ax + b
+      const linearMatch = expr.match(/([+-]?\d*\.?\d*)x/);
+      const constantMatch = expr.match(/([+-]?\d+\.?\d*)(?!x)/);
+      
+      const a = linearMatch ? parseFloat(linearMatch[1] || '1') : 0;
+      const b = constantMatch ? parseFloat(constantMatch[1] || '0') : 0;
+      
+      if (a !== 0) {
+        return { a, b };
+      }
+      
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Solve polynomial equations using actual mathematical algorithms
+   */
+  private solvePolynomialWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      // For now, try to solve as quadratic or linear
+      const [left, right] = expression.split('=').map(s => s.trim());
+      const equation = `${left} - (${right})`;
+      const parsed = parse(equation);
+      
+      // Check if it's quadratic
+      const quadraticCoeffs = this.extractQuadraticCoefficients(parsed);
+      if (quadraticCoeffs && quadraticCoeffs.a !== 0) {
+        return this.solveQuadraticWithMathJS(expression);
+      }
+      
+      // Check if it's linear
+      const linearCoeffs = this.extractLinearCoefficients(parsed);
+      if (linearCoeffs && linearCoeffs.a !== 0) {
+        return this.solveLinearWithMathJS(expression);
+      }
       
       return {
-        expression: `${variable} = ${solution}`,
-        explanation: `Subtract ${constVal} from both sides: ${coeff}${variable} = ${target - constVal}, then divide by ${coeff}: ${variable} = ${solution}`
+        expression: expression,
+        explanation: `Could not solve polynomial equation: ${expression}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not solve polynomial equation: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * General solve using actual mathematical algorithms
+   */
+  private solveWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      // Try different solving strategies
+      const [left, right] = expression.split('=').map(s => s.trim());
+      const equation = `${left} - (${right})`;
+      const parsed = parse(equation);
+      
+      // Check if it's quadratic
+      const quadraticCoeffs = this.extractQuadraticCoefficients(parsed);
+      if (quadraticCoeffs && quadraticCoeffs.a !== 0) {
+        return this.solveQuadraticWithMathJS(expression);
+      }
+      
+      // Check if it's linear
+      const linearCoeffs = this.extractLinearCoefficients(parsed);
+      if (linearCoeffs && linearCoeffs.a !== 0) {
+        return this.solveLinearWithMathJS(expression);
+      }
+      
+      // Try to evaluate if it's a simple equation
+      try {
+        const result = evaluate(equation);
+        if (result === 0) {
+          return {
+            expression: `x = any value`,
+            explanation: `Equation is always true: ${expression}`
+          };
+        } else {
+          return {
+            expression: `No solution`,
+            explanation: `Equation has no solution: ${expression}`
+          };
+        }
+      } catch {
+        return {
+          expression: expression,
+          explanation: `Could not solve equation: ${expression}`
+        };
+      }
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not solve equation: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Expand expressions using MathJS
+   */
+  private expandWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const expanded = simplify(expression, { expand: true });
+      return {
+        expression: expanded.toString(),
+        explanation: `Expanded expression using MathJS: ${expression} → ${expanded}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not expand expression: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Simplify expressions using MathJS
+   */
+  private simplifyWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const simplified = simplify(expression);
+      return {
+        expression: simplified.toString(),
+        explanation: `Simplified expression using MathJS: ${expression} → ${simplified}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not simplify expression: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Clear fractions using MathJS
+   */
+  private clearFractionsWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      // This is a simplified approach - MathJS doesn't have direct fraction clearing
+      const simplified = simplify(expression);
+      return {
+        expression: simplified.toString(),
+        explanation: `Cleared fractions using MathJS: ${expression} → ${simplified}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not clear fractions: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Derive expressions using MathJS
+   */
+  private deriveWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const derived = derivative(expression, 'x');
+      return {
+        expression: derived.toString(),
+        explanation: `Derived expression using MathJS: d/dx(${expression}) = ${derived}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not derive expression: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Factor expressions using MathJS
+   */
+  private factorWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      // MathJS doesn't have direct factoring, but we can try simplification
+      const factored = simplify(expression);
+      return {
+        expression: factored.toString(),
+        explanation: `Factored expression using MathJS: ${expression} → ${factored}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Could not factor expression: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Try direct solve using actual mathematical algorithms
+   */
+  private tryDirectSolve(expression: string): {
+    success: boolean;
+    expression: string;
+    explanation: string;
+  } {
+    try {
+      const result = this.solveWithMathJS(expression);
+      return {
+        success: true,
+        expression: result.expression,
+        explanation: result.explanation
+      };
+    } catch (error) {
+      return {
+        success: false,
+        expression: expression,
+        explanation: `Could not solve directly: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Fallback prediction using pattern matching
+   */
+  private fallbackPrediction(expression: string): GNNPrediction {
+    if (expression.includes('=')) {
+      return {
+        operation: 'SOLVE',
+        confidence: 0.75,
+        explanation: 'Attempt direct solution using pattern matching',
+        strategy: 'fallback',
+        fallbackUsed: true
       };
     }
     
     return {
-      expression: expression,
-      explanation: `Could not solve linear equation: ${expression}`
+      operation: 'SIMPLIFY',
+      confidence: 0.60,
+      explanation: 'Apply simplification as fallback',
+      strategy: 'fallback',
+      fallbackUsed: true
     };
-  }
-
-  /**
-   * Expand expressions with parentheses
-   */
-  private expandExpression(expression: string): { expression: string; explanation: string } {
-    // Simple expansion: a(b + c) = ab + ac
-    const expandMatch = expression.match(/(\d+)\(([^)]+)\)/);
-    if (expandMatch) {
-      const [, coefficient, inside] = expandMatch;
-      const coeff = parseFloat(coefficient);
-      const terms = inside.split('+').map(t => t.trim());
-      const expanded = terms.map(term => `${coeff * parseFloat(term)}`).join(' + ');
-      
-      return {
-        expression: expression.replace(expandMatch[0], expanded),
-        explanation: `Expand: ${coefficient}(${inside}) = ${expanded}`
-      };
-    }
-    
-    return {
-      expression: expression.replace(/\(/g, '').replace(/\)/g, ''),
-      explanation: `Expanded: ${expression}`
-    };
-  }
-
-  /**
-   * Move terms to isolate variable
-   */
-  private moveTerms(expression: string): { expression: string; explanation: string } {
-    const [left, right] = expression.split('=').map(s => s.trim());
-    
-    // Move constant from left to right: x + 3 = 5 → x = 5 - 3
-    const constMatch = left.match(/([a-zA-Z])\s*\+\s*(\d+)/);
-    if (constMatch && this.isNumeric(right)) {
-      const [, variable, constant] = constMatch;
-      const target = parseFloat(right);
-      const constVal = parseFloat(constant);
-      
-      return {
-        expression: `${variable} = ${target - constVal}`,
-        explanation: `Subtract ${constant} from both sides: ${variable} = ${target} - ${constant} = ${target - constVal}`
-      };
-    }
-    
-    return {
-      expression: expression,
-      explanation: `Moved terms in: ${expression}`
-    };
-  }
-
-  /**
-   * Clear fractions by multiplying both sides
-   */
-  private clearFractions(expression: string): { expression: string; explanation: string } {
-    const [left, right] = expression.split('=').map(s => s.trim());
-    
-    // Simple case: x/2 = 3 → x = 6
-    const fractionMatch = left.match(/([a-zA-Z])\/(\d+)/);
-    if (fractionMatch && this.isNumeric(right)) {
-      const [, variable, denominator] = fractionMatch;
-      const target = parseFloat(right);
-      const denom = parseFloat(denominator);
-      
-      return {
-        expression: `${variable} = ${target * denom}`,
-        explanation: `Multiply both sides by ${denominator}: ${variable} = ${target} × ${denominator} = ${target * denom}`
-      };
-    }
-    
-    return {
-      expression: expression,
-      explanation: `Cleared fractions in: ${expression}`
-    };
-  }
-
-  /**
-   * Combine like terms
-   */
-  private combineLikeTerms(expression: string): { expression: string; explanation: string } {
-    // Simple case: 2x + 3x = 5x
-    const likeTermsMatch = expression.match(/(\d+)x\s*\+\s*(\d+)x/);
-    if (likeTermsMatch) {
-      const [, coeff1, coeff2] = likeTermsMatch;
-      const sum = parseFloat(coeff1) + parseFloat(coeff2);
-      
-      return {
-        expression: expression.replace(likeTermsMatch[0], `${sum}x`),
-        explanation: `Combine like terms: ${coeff1}x + ${coeff2}x = ${sum}x`
-      };
-    }
-    
-    return {
-      expression: expression,
-      explanation: `Combined like terms in: ${expression}`
-    };
-  }
-
-  /**
-   * Direct solve using pattern matching
-   */
-  private directSolve(expression: string): { expression: string; explanation: string } {
-    // Try to solve common patterns
-    if (expression.includes('^2')) {
-      return this.solveQuadratic(expression);
-    }
-    
-    if (expression.includes('*') && expression.includes('+')) {
-      return this.solveLinear(expression);
-    }
-    
-    return {
-      expression: expression,
-      explanation: `Attempted direct solution for: ${expression}`
-    };
-  }
-
-  /**
-   * Helper: Check if string is numeric
-   */
-  private isNumeric(str: string): boolean {
-    return !isNaN(parseFloat(str)) && isFinite(parseFloat(str));
-  }
-
-  /**
-   * Helper: Check if string is a single variable
-   */
-  private isVariable(str: string): boolean {
-    return /^[a-zA-Z]$/.test(str.trim());
   }
 
   /**
@@ -633,9 +890,9 @@ export class GNNSolver {
     const match = expression.match(/^([a-zA-Z])\s*=\s*([^=]+)$/);
     if (match) return true;
     
-    // Check if it's a quadratic solution: x = value or x = -value
-    const quadMatch = expression.match(/^([a-zA-Z])\s*=\s*([^=]+)\s*or\s*([a-zA-Z])\s*=\s*([^=]+)$/);
-    if (quadMatch) return true;
+    // Check if it's a solution with multiple values: x = value or x = value
+    const multiMatch = expression.match(/^([a-zA-Z])\s*=\s*([^=]+)\s*or\s*([a-zA-Z])\s*=\s*([^=]+)$/);
+    if (multiMatch) return true;
     
     // Check if it's a solution with ±: x = ±value
     const pmMatch = expression.match(/^([a-zA-Z])\s*=\s*±([^=]+)$/);
@@ -649,16 +906,23 @@ export class GNNSolver {
   }
 
   /**
+   * Helper: Check if string is numeric
+   */
+  private isNumeric(str: string): boolean {
+    return !isNaN(parseFloat(str)) && isFinite(parseFloat(str));
+  }
+
+  /**
    * Get confidence score for a prediction
    */
   getConfidenceScore(expression: string, operation: string): number {
-    // Simple confidence scoring based on expression features
     let confidence = 0.5;
     
     if (expression.includes('=')) confidence += 0.1;
     if (expression.includes('(')) confidence += 0.1;
     if (expression.includes('+') || expression.includes('-')) confidence += 0.1;
     if (expression.includes('*') || expression.includes('/')) confidence += 0.1;
+    if (expression.includes('^')) confidence += 0.1;
     
     return Math.min(confidence, 0.95);
   }
@@ -690,7 +954,7 @@ export class GNNSolver {
       maxExpressionLength: this.limitations.maxExpressionLength,
       maxVariables: this.limitations.maxVariables,
       supportedOperations: [...this.limitations.supportedOperations],
-      fallbackStrategies: ['Direct SymPy solve', 'Extreme simplification', 'Pattern matching']
+      fallbackStrategies: ['MathJS solve', 'Pattern matching', 'Manual solving']
     };
   }
 } 

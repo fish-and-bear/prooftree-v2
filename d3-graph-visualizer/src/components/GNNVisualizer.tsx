@@ -266,171 +266,174 @@ export const GNNVisualizer: React.FC<GNNVisualizerProps> = ({
   useEffect(() => {
     if (!svgRef.current || solvingHistory.length === 0) return;
     
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+    try {
+      const svg = d3.select(svgRef.current);
+      svg.selectAll('*').remove();
 
-    // Combine all nodes and edges from all steps
-    const allNodes: GraphNode[] = [];
-    const allEdges: GraphEdge[] = [];
-    
-    solvingHistory.forEach(step => {
-      allNodes.push(...step.graphNodes);
-      allEdges.push(...step.graphEdges);
-    });
-
-    const width = 1200;
-    const height = 800;
-
-    // Set up simulation with better layout for educational visualization
-    const simulation = d3.forceSimulation(allNodes as any)
-      .force('link', d3.forceLink(allEdges as any).id((d: any) => d.id).distance(120))
-      .force('charge', d3.forceManyBody().strength(-500))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('x', d3.forceX().x((d: any) => {
-        // Position nodes by step number
-        if (d.stepNumber) {
-          return d.stepNumber * 200 + 100;
-        }
-        return width / 2;
-      }))
-      .force('y', d3.forceY().y((d: any) => {
-        // Position nodes by type
-        switch (d.type) {
-          case 'step': return 50;
-          case 'expression': return 200;
-          case 'operation': return 350;
-          case 'result': return 500;
-          default: return 650;
-        }
-      }))
-      .force('collision', d3.forceCollide().radius(40));
-
-    // Color scheme for educational visualization
-    const nodeColors = {
-      step: '#4299e1',
-      expression: '#f56565',
-      operation: '#9f7aea',
-      result: '#48bb78'
-    };
-
-    // Draw edges with labels
-    const link = svg.append('g')
-      .attr('stroke', '#999')
-      .attr('stroke-opacity', 0.6)
-      .selectAll('line')
-      .data(allEdges)
-      .join('line')
-      .attr('stroke-width', d => (d.weight || 1) * 2)
-      .attr('marker-end', 'url(#arrow)');
-
-    // Add arrow marker
-    svg.append('defs').append('marker')
-      .attr('id', 'arrow')
-      .attr('viewBox', '0 -5 10 10')
-      .attr('refX', 15)
-      .attr('refY', 0)
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .attr('orient', 'auto')
-      .append('path')
-      .attr('d', 'M0,-5L10,0L0,5')
-      .attr('fill', '#999');
-
-    // Draw nodes with enhanced styling
-    const node = svg.append('g')
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 2)
-      .selectAll('g')
-      .data(allNodes)
-      .join('g')
-      .call(d3.drag<any, GraphNode>()
-        .on('start', (event, d) => {
-          if (!event.active) simulation.alphaTarget(0.3).restart();
-          (d as any).fx = (d as any).x;
-          (d as any).fy = (d as any).y;
-        })
-        .on('drag', (event, d) => {
-          (d as any).fx = event.x;
-          (d as any).fy = event.y;
-        })
-        .on('end', (event, d) => {
-          if (!event.active) simulation.alphaTarget(0);
-          (d as any).fx = null;
-          (d as any).fy = null;
-        }));
-
-    // Add circles for nodes
-    node.append('circle')
-      .attr('r', d => {
-        switch (d.type) {
-          case 'step': return 25;
-          case 'expression': return 35;
-          case 'operation': return 30;
-          case 'result': return 35;
-          default: return 20;
-        }
-      })
-      .attr('fill', d => d.color || nodeColors[d.type as keyof typeof nodeColors])
-      .on('click', (event, d) => setSelectedNode(d))
-      .on('mouseover', function(event, d) {
-        d3.select(this).attr('stroke-width', 4);
-        // Show tooltip
-        const tooltip = d3.select('body').append('div')
-          .attr('class', 'tooltip')
-          .style('position', 'absolute')
-          .style('background', 'rgba(0,0,0,0.8)')
-          .style('color', 'white')
-          .style('padding', '8px')
-          .style('border-radius', '4px')
-          .style('pointer-events', 'none');
-        
-        if (d.explanation) {
-          tooltip.html(`<strong>${d.label}</strong><br/>${d.explanation}`);
-        } else {
-          tooltip.html(d.label);
-        }
-        
-        tooltip.style('left', (event.pageX + 10) + 'px')
-               .style('top', (event.pageY - 10) + 'px');
-      })
-      .on('mouseout', function() {
-        d3.select(this).attr('stroke-width', 2);
-        d3.selectAll('.tooltip').remove();
+      // Combine all nodes and edges from all steps
+      const allNodes: GraphNode[] = [];
+      const allEdges: GraphEdge[] = [];
+      
+      solvingHistory.forEach(step => {
+        allNodes.push(...step.graphNodes);
+        allEdges.push(...step.graphEdges);
       });
 
-    // Add labels
-    node.append('text')
-      .text(d => d.label.length > 20 ? d.label.substring(0, 17) + '...' : d.label)
-      .attr('text-anchor', 'middle')
-      .attr('dy', '0.35em')
-      .attr('font-size', '12px')
-      .attr('fill', 'white')
-      .attr('font-weight', 'bold');
+      // Ensure we have valid data
+      if (allNodes.length === 0) return;
 
-    // Add confidence indicators
-    if (showConfidence) {
-      node.filter(d => d.confidence !== undefined).append('circle')
-        .attr('r', 8)
-        .attr('cx', 25)
-        .attr('cy', -25)
-        .attr('fill', d => d3.interpolateRdYlGn(d.confidence || 0))
-        .attr('stroke', 'white')
-        .attr('stroke-width', 1);
+      const width = 1200;
+      const height = 800;
+
+      // Set up simulation with better layout for educational visualization
+      const simulation = d3.forceSimulation(allNodes as any)
+        .force('link', d3.forceLink(allEdges as any).id((d: any) => d.id).distance(120))
+        .force('charge', d3.forceManyBody().strength(-500))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('x', d3.forceX().x((d: any) => {
+          // Position nodes by step number
+          if (d.stepNumber) {
+            return d.stepNumber * 200 + 100;
+          }
+          return width / 2;
+        }))
+        .force('y', d3.forceY().y((d: any) => {
+          // Position nodes by type
+          switch (d.type) {
+            case 'step': return 50;
+            case 'expression': return 200;
+            case 'operation': return 350;
+            case 'result': return 500;
+            default: return 650;
+          }
+        }))
+        .force('collision', d3.forceCollide().radius(40));
+
+      // Color scheme for educational visualization
+      const nodeColors = {
+        step: '#4299e1',
+        expression: '#f56565',
+        operation: '#9f7aea',
+        result: '#48bb78'
+      };
+
+      // Draw edges with labels
+      const link = svg.append('g')
+        .attr('stroke', '#999')
+        .attr('stroke-opacity', 0.6)
+        .selectAll('line')
+        .data(allEdges)
+        .join('line')
+        .attr('stroke-width', d => (d.weight || 1) * 2)
+        .attr('marker-end', 'url(#arrow)');
+
+      // Add arrow marker
+      svg.append('defs').append('marker')
+        .attr('id', 'arrow')
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 15)
+        .attr('refY', 0)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', '#999');
+
+      // Draw nodes with enhanced styling
+      const node = svg.append('g')
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 2)
+        .selectAll('g')
+        .data(allNodes)
+        .join('g')
+        .call(d3.drag<any, GraphNode>()
+          .on('start', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            (d as any).fx = (d as any).x;
+            (d as any).fy = (d as any).y;
+          })
+          .on('drag', (event, d) => {
+            (d as any).fx = event.x;
+            (d as any).fy = event.y;
+          })
+          .on('end', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0);
+            (d as any).fx = null;
+            (d as any).fy = null;
+          }));
+
+      // Add circles for nodes
+      node.append('circle')
+        .attr('r', d => {
+          switch (d.type) {
+            case 'step': return 25;
+            case 'expression': return 35;
+            case 'operation': return 30;
+            case 'result': return 35;
+            default: return 20;
+          }
+        })
+        .attr('fill', d => d.color || nodeColors[d.type as keyof typeof nodeColors])
+        .on('click', (event, d) => setSelectedNode(d))
+        .on('mouseover', function(event, d) {
+          d3.select(this).attr('stroke-width', 4);
+          // Show tooltip
+          const tooltip = d3.select('body').append('div')
+            .attr('class', 'tooltip')
+            .style('position', 'absolute')
+            .style('background', 'rgba(0,0,0,0.8)')
+            .style('color', 'white')
+            .style('padding', '8px')
+            .style('border-radius', '4px')
+            .style('pointer-events', 'none');
+          
+          if (d.explanation) {
+            tooltip.html(`<strong>${d.label}</strong><br/>${d.explanation}`);
+          } else {
+            tooltip.html(d.label);
+          }
+          
+          tooltip.style('left', (event.pageX + 10) + 'px')
+                 .style('top', (event.pageY - 10) + 'px');
+        })
+        .on('mouseout', function() {
+          d3.select(this).attr('stroke-width', 2);
+          d3.selectAll('.tooltip').remove();
+        });
+
+      // Add labels to nodes
+      node.append('text')
+        .text(d => d.label)
+        .attr('text-anchor', 'middle')
+        .attr('dy', '0.35em')
+        .style('font-size', '12px')
+        .style('font-weight', 'bold')
+        .style('fill', 'white')
+        .style('pointer-events', 'none');
+
+      // Update positions on simulation tick
+      simulation.on('tick', () => {
+        link
+          .attr('x1', (d: any) => d.source.x)
+          .attr('y1', (d: any) => d.source.y)
+          .attr('x2', (d: any) => d.target.x)
+          .attr('y2', (d: any) => d.target.y);
+
+        node
+          .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+      });
+
+      // Cleanup function
+      return () => {
+        simulation.stop();
+        d3.selectAll('.tooltip').remove();
+      };
+      
+    } catch (error) {
+      console.error('Error rendering GNN visualization:', error);
     }
-
-    // Update positions on simulation tick
-    simulation.on('tick', () => {
-      link
-        .attr('x1', (d: any) => d.source.x)
-        .attr('y1', (d: any) => d.source.y)
-        .attr('x2', (d: any) => d.target.x)
-        .attr('y2', (d: any) => d.target.y);
-
-      node
-        .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
-    });
-
-  }, [solvingHistory, showConfidence]);
+  }, [solvingHistory]);
 
   // Start solving when expression changes
   useEffect(() => {
