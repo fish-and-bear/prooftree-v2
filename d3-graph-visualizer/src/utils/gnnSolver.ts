@@ -231,28 +231,7 @@ export class GNNSolver {
     }
     
     try {
-      // Try direct solve first
-      const directSolution = this.tryDirectSolve(currentExpression);
-      if (directSolution.success) {
-        steps.push({
-          expression: directSolution.expression,
-          operation: 'DIRECT_SOLVE',
-          explanation: directSolution.explanation,
-          confidence: 1.0,
-          timestamp: Date.now(),
-          strategy: 'direct_solve',
-          fallbackUsed: false
-        });
-        
-        return {
-          steps,
-          success: true,
-          finalStrategy: 'direct_solve',
-          limitations
-        };
-      }
-      
-      // Step-by-step solving
+      // ALWAYS do step-by-step solving - no direct solve shortcuts!
       for (let step = 0; step < this.config.maxSteps; step++) {
         const prediction = this.predictNextStep(currentExpression);
         
@@ -274,6 +253,16 @@ export class GNNSolver {
         
         // Check if solved
         if (this.isSolved(currentExpression)) {
+          // Add final solution step
+          steps.push({
+            expression: currentExpression,
+            operation: 'SOLUTION_FOUND',
+            explanation: `Solution found: ${currentExpression}`,
+            confidence: 1.0,
+            timestamp: Date.now(),
+            strategy: 'solution_detection',
+            fallbackUsed: false
+          });
           break;
         }
         
@@ -402,30 +391,63 @@ export class GNNSolver {
     if (analysis.isEquation) {
       const [left, right] = expression.split('=').map(s => s.trim());
       
-      // Quadratic equations
+      // First, always try to simplify and prepare the equation
+      if (analysis.hasParentheses) {
+        return {
+          type: 'EXPAND',
+          confidence: 0.90,
+          explanation: 'Expand parentheses to prepare equation for solving'
+        };
+      }
+      
+      if (analysis.hasFractions) {
+        return {
+          type: 'CLEAR_FRACTIONS',
+          confidence: 0.85,
+          explanation: 'Clear fractions by finding common denominator'
+        };
+      }
+      
+      // Move terms to one side if not already done
+      if (right !== '0' && !right.match(/^[+-]?\d*\.?\d*$/)) {
+        return {
+          type: 'MOVE_TERMS',
+          confidence: 0.80,
+          explanation: 'Move all terms to left side to get standard form'
+        };
+      }
+      
+      // Combine like terms if possible
+      if (analysis.hasVariables && analysis.hasConstants) {
+        return {
+          type: 'COMBINE_LIKE_TERMS',
+          confidence: 0.85,
+          explanation: 'Combine like terms to simplify the equation'
+        };
+      }
+      
+      // Now determine solving strategy based on degree
       if (analysis.isQuadratic) {
         return {
           type: 'SOLVE_QUADRATIC',
           confidence: 0.95,
-          explanation: 'Solve quadratic equation using quadratic formula or factoring'
+          explanation: 'Apply quadratic formula to solve quadratic equation'
         };
       }
       
-      // Linear equations
       if (analysis.isLinear) {
         return {
           type: 'SOLVE_LINEAR',
           confidence: 0.90,
-          explanation: 'Solve linear equation by isolating variable'
+          explanation: 'Isolate variable to solve linear equation'
         };
       }
       
-      // Polynomial equations
       if (analysis.isPolynomial) {
         return {
           type: 'SOLVE_POLYNOMIAL',
           confidence: 0.85,
-          explanation: 'Solve polynomial equation using appropriate method'
+          explanation: 'Apply appropriate method to solve polynomial equation'
         };
       }
       
@@ -439,7 +461,7 @@ export class GNNSolver {
       }
     }
     
-    // Simplification operations
+    // For non-equations, focus on simplification
     if (analysis.hasParentheses) {
       return {
         type: 'EXPAND',
@@ -461,6 +483,15 @@ export class GNNSolver {
         type: 'SIMPLIFY',
         confidence: 0.75,
         explanation: 'Simplify expression using exponent rules'
+      };
+    }
+    
+    // If expression can be evaluated, do it
+    if (analysis.canEvaluate) {
+      return {
+        type: 'EVALUATE',
+        confidence: 0.95,
+        explanation: 'Evaluate the expression to get numerical result'
       };
     }
     
@@ -506,6 +537,15 @@ export class GNNSolver {
         
         case 'FACTOR':
           return this.factorWithMathJS(expression);
+        
+        case 'MOVE_TERMS':
+          return this.moveTermsWithMathJS(expression);
+        
+        case 'COMBINE_LIKE_TERMS':
+          return this.combineLikeTermsWithMathJS(expression);
+        
+        case 'EVALUATE':
+          return this.evaluateWithMathJS(expression);
         
         default:
           return {
@@ -831,6 +871,122 @@ export class GNNSolver {
       return {
         expression: expression,
         explanation: `Could not factor expression: ${expression}`
+      };
+    }
+  }
+
+  /**
+   * Manual quadratic solving fallback
+   */
+  private solveQuadraticManual(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      const equation = `${left} - (${right})`;
+      
+      // Simple pattern matching for ax^2 + bx + c = 0
+      const quadraticMatch = equation.match(/([+-]?\d*\.?\d*)x\^2/);
+      const linearMatch = equation.match(/([+-]?\d*\.?\d*)x(?!\^)/);
+      const constantMatch = equation.match(/([+-]?\d+\.?\d*)(?!x)/);
+      
+      const a = quadraticMatch ? parseFloat(quadraticMatch[1] || '1') : 0;
+      const b = linearMatch ? parseFloat(linearMatch[1] || '1') : 0;
+      const c = constantMatch ? parseFloat(constantMatch[1] || '0') : 0;
+      
+      if (a !== 0) {
+        const discriminant = b * b - 4 * a * c;
+        
+        if (discriminant > 0) {
+          const x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+          const x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+          return {
+            expression: `x = ${x1.toFixed(3)} or x = ${x2.toFixed(3)}`,
+            explanation: `Manual quadratic formula: x = (-${b} ± √(${b}² - 4×${a}×${c})) / (2×${a}) = ${x1.toFixed(3)} or ${x2.toFixed(3)}`
+          };
+        } else if (discriminant === 0) {
+          const x = -b / (2 * a);
+          return {
+            expression: `x = ${x.toFixed(3)}`,
+            explanation: `Manual quadratic formula: x = -${b} / (2×${a}) = ${x.toFixed(3)} (double root)`
+          };
+        } else {
+          const realPart = -b / (2 * a);
+          const imagPart = Math.sqrt(-discriminant) / (2 * a);
+          return {
+            expression: `x = ${realPart.toFixed(3)} ± ${imagPart.toFixed(3)}i`,
+            explanation: `Manual quadratic formula: complex solutions x = ${realPart.toFixed(3)} ± ${imagPart.toFixed(3)}i`
+          };
+        }
+      }
+      
+      return {
+        expression: expression,
+        explanation: `Could not solve quadratic equation: ${expression}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error in manual quadratic solving: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Move terms to one side of equation
+   */
+  private moveTermsWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      
+      // Move all terms to left side
+      const newLeft = `${left} - (${right})`;
+      const simplified = simplify(newLeft);
+      
+      return {
+        expression: `${simplified} = 0`,
+        explanation: `Moved all terms to left side: ${left} - (${right}) = ${simplified} = 0`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error moving terms: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Combine like terms in expression
+   */
+  private combineLikeTermsWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const simplified = simplify(expression);
+      
+      return {
+        expression: simplified.toString(),
+        explanation: `Combined like terms: ${expression} → ${simplified}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error combining like terms: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Evaluate expression to numerical result
+   */
+  private evaluateWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const result = evaluate(expression);
+      
+      return {
+        expression: result.toString(),
+        explanation: `Evaluated expression: ${expression} = ${result}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error evaluating expression: ${(error as Error).message}`
       };
     }
   }
