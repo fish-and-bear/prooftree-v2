@@ -93,45 +93,58 @@ class GNNAlgebraSolver:
         for step_num in range(self.max_steps):
             # Check if already solved
             if self._is_solved(current_expr):
-                steps.append(AlgebraicStep(
-                    current_expr,
-                    AlgebraicOperation.SIMPLIFY,
-                    "Solution found"
-                ))
+                if show_steps:
+                    print(f"Step {step_num + 1}: Solution found!")
                 break
             
-            # Predict next step
+            # Try to predict next step with GNN model
+            next_expr = None
+            operation = None
+            description = None
+            
             try:
                 next_expr, operation, description = self._predict_next_step(current_expr)
                 
                 # Verify step if enabled
-                if self.use_verification:
+                if self.use_verification and next_expr != current_expr:
                     is_valid, verification_msg = self.verifier.verify_step_validity(
                         current_expr, next_expr, operation
                     )
                     
                     if not is_valid:
                         logger.warning(f"Invalid step predicted: {verification_msg}")
-                        # Try alternative approach
-                        next_expr, operation, description = self._fallback_step(current_expr)
-                        if next_expr is None:
-                            break
-                
-                # Add step
-                steps.append(AlgebraicStep(next_expr, operation, description))
-                current_expr = next_expr
-                
-                if show_steps:
-                    print(f"Step {step_num + 1}: {next_expr} ({description})")
+                        next_expr = None  # Force fallback
                 
             except Exception as e:
-                logger.error(f"Error in step {step_num + 1}: {e}")
-                # Try fallback
-                next_expr, operation, description = self._fallback_step(current_expr)
-                if next_expr is None:
+                logger.error(f"Error in GNN prediction: {e}")
+                next_expr = None  # Force fallback
+            
+            # If GNN didn't work or gave invalid step, use fallback
+            if next_expr is None or next_expr == current_expr:
+                try:
+                    next_expr, operation, description = self._fallback_step(current_expr)
+                    if next_expr is None:
+                        if show_steps:
+                            print(f"Step {step_num + 1}: No more steps available")
+                        break
+                except Exception as e:
+                    logger.error(f"Error in fallback step: {e}")
                     break
-                steps.append(AlgebraicStep(next_expr, operation, description))
-                current_expr = next_expr
+            
+            # Add step
+            steps.append(AlgebraicStep(next_expr, operation, description))
+            current_expr = next_expr
+            
+            if show_steps:
+                print(f"Step {step_num + 1}: {next_expr} ({description})")
+            
+            # Safety check to prevent infinite loops
+            if len(steps) > 2:
+                # Check if we're repeating steps
+                if str(current_expr) == str(steps[-3].expression):
+                    if show_steps:
+                        print(f"Step {step_num + 1}: Detected loop, stopping")
+                    break
         
         if show_steps:
             print(f"\nFinal answer: {current_expr}")
@@ -180,7 +193,7 @@ class GNNAlgebraSolver:
                         expr: Union[sp.Basic, sp.Eq],
                         operation: OperationType,
                         parameter: float) -> Tuple[sp.Basic, str]:
-        """Apply a predicted operation to an expression.
+        """Apply a predicted operation to an expression with enhanced error handling.
         
         Args:
             expr: Current expression or equation
@@ -190,67 +203,100 @@ class GNNAlgebraSolver:
         Returns:
             Tuple of (new_expression, description)
         """
-        if not isinstance(expr, Eq):
-            # Handle expression simplification
-            if operation == OperationType.EXPAND:
-                result = self.transformer.expand_expression(expr)
-                return result, "Expanded expression"
-            elif operation == OperationType.FACTOR:
-                result = self.transformer.factor_expression(expr)
-                return result, "Factored expression"
+        try:
+            if not isinstance(expr, Eq):
+                # Handle expression simplification with detailed explanations
+                if operation == OperationType.EXPAND:
+                    result = self.transformer.expand_expression(expr)
+                    return result, f"Expanded expression: {expr} → {result}"
+                elif operation == OperationType.FACTOR:
+                    result = self.transformer.factor_expression(expr)
+                    return result, f"Factored expression: {expr} → {result}"
+                elif operation == OperationType.SIMPLIFY:
+                    result = self.transformer.simplify_expression(expr)
+                    return result, f"Simplified expression: {expr} → {result}"
+                elif operation == OperationType.COMBINE_LIKE_TERMS:
+                    result = self.transformer.combine_like_terms(expr)
+                    return result, f"Combined like terms: {expr} → {result}"
+                else:
+                    # Default to simplification
+                    result = self.transformer.simplify_expression(expr)
+                    return result, f"Simplified expression: {expr} → {result}"
+            
+            # Handle equations with enhanced operations
+            if operation == OperationType.ADD_TO_BOTH_SIDES:
+                # Use parameter as the term to add
+                term = self._parameter_to_term(expr, parameter)
+                if term != 0:
+                    result = self.transformer.add_to_both_sides(expr, term)
+                    return result, f"Add {term} to both sides: {expr.lhs} + {term} = {expr.rhs} + {term}"
+                else:
+                    return expr, "No change needed (adding 0)"
+            
+            elif operation == OperationType.SUBTRACT_FROM_BOTH_SIDES:
+                # Find appropriate term to subtract
+                term = self._find_term_to_move(expr)
+                if term and term != 0:
+                    result = self.transformer.subtract_from_both_sides(expr, term)
+                    return result, f"Subtract {term} from both sides: {expr.lhs} - {term} = {expr.rhs} - {term}"
+                else:
+                    return expr, "No suitable term to subtract"
+            
+            elif operation == OperationType.MULTIPLY_BOTH_SIDES:
+                factor = self._parameter_to_factor(expr, parameter)
+                if factor != 0 and factor != 1:
+                    result = self.transformer.multiply_both_sides(expr, factor)
+                    return result, f"Multiply both sides by {factor}: {factor} * ({expr.lhs}) = {factor} * ({expr.rhs})"
+                else:
+                    return expr, "No change needed (multiplying by 0 or 1)"
+            
+            elif operation == OperationType.DIVIDE_BOTH_SIDES:
+                divisor = self._find_coefficient(expr)
+                if divisor and divisor != 1 and divisor != 0:
+                    result = self.transformer.divide_both_sides(expr, divisor)
+                    return result, f"Divide both sides by {divisor}: ({expr.lhs}) / {divisor} = ({expr.rhs}) / {divisor}"
+                else:
+                    return expr, "No suitable divisor found"
+            
+            elif operation == OperationType.EXPAND:
+                expanded_lhs = self.transformer.expand_expression(expr.lhs)
+                expanded_rhs = self.transformer.expand_expression(expr.rhs)
+                result = Eq(expanded_lhs, expanded_rhs)
+                return result, f"Expanded both sides: {expr.lhs} → {expanded_lhs}, {expr.rhs} → {expanded_rhs}"
+            
             elif operation == OperationType.SIMPLIFY:
-                result = self.transformer.simplify_expression(expr)
-                return result, "Simplified expression"
+                simplified_lhs = self.transformer.simplify_expression(expr.lhs)
+                simplified_rhs = self.transformer.simplify_expression(expr.rhs)
+                result = Eq(simplified_lhs, simplified_rhs)
+                return result, f"Simplified both sides: {expr.lhs} → {simplified_lhs}, {expr.rhs} → {simplified_rhs}"
+            
             elif operation == OperationType.COMBINE_LIKE_TERMS:
-                result = self.transformer.combine_like_terms(expr)
-                return result, "Combined like terms"
-            else:
-                # Default to simplification
-                result = self.transformer.simplify_expression(expr)
-                return result, "Simplified expression"
-        
-        # Handle equations
-        if operation == OperationType.ADD_TO_BOTH_SIDES:
-            # Use parameter as the term to add
-            term = self._parameter_to_term(expr, parameter)
-            result = self.transformer.add_to_both_sides(expr, term)
-            return result, f"Add {term} to both sides"
-        
-        elif operation == OperationType.SUBTRACT_FROM_BOTH_SIDES:
-            # Find appropriate term to subtract
-            term = self._find_term_to_move(expr)
-            if term:
-                result = self.transformer.subtract_from_both_sides(expr, term)
-                return result, f"Subtract {term} from both sides"
-        
-        elif operation == OperationType.MULTIPLY_BOTH_SIDES:
-            factor = self._parameter_to_factor(expr, parameter)
-            if factor != 0:
-                result = self.transformer.multiply_both_sides(expr, factor)
-                return result, f"Multiply both sides by {factor}"
-        
-        elif operation == OperationType.DIVIDE_BOTH_SIDES:
-            divisor = self._find_coefficient(expr)
-            if divisor and divisor != 1:
-                result = self.transformer.divide_both_sides(expr, divisor)
-                return result, f"Divide both sides by {divisor}"
-        
-        elif operation == OperationType.EXPAND:
-            result = Eq(
-                self.transformer.expand_expression(expr.lhs),
-                self.transformer.expand_expression(expr.rhs)
-            )
-            return result, "Expanded both sides"
-        
-        elif operation == OperationType.SIMPLIFY:
-            result = Eq(
-                self.transformer.simplify_expression(expr.lhs),
-                self.transformer.simplify_expression(expr.rhs)
-            )
-            return result, "Simplified both sides"
-        
-        # Default fallback
-        return expr, "No operation applied"
+                combined_lhs = self.transformer.combine_like_terms(expr.lhs)
+                combined_rhs = self.transformer.combine_like_terms(expr.rhs)
+                result = Eq(combined_lhs, combined_rhs)
+                return result, f"Combined like terms: {expr.lhs} → {combined_lhs}, {expr.rhs} → {combined_rhs}"
+            
+            elif operation == OperationType.MOVE_TERMS:
+                # Smart term moving based on variable isolation
+                variables = list(expr.free_symbols)
+                if variables:
+                    var = variables[0]
+                    moved_expr = self._smart_move_terms(expr, var)
+                    if moved_expr != expr:
+                        return moved_expr, f"Moved terms to isolate {var}"
+            
+            elif operation == OperationType.APPLY_QUADRATIC_FORMULA:
+                # Apply quadratic formula if applicable
+                quadratic_solution = self._apply_quadratic_formula(expr)
+                if quadratic_solution:
+                    return quadratic_solution, "Applied quadratic formula"
+            
+            # Default fallback with better error handling
+            return expr, "No operation applied (operation not implemented)"
+            
+        except Exception as e:
+            logger.error(f"Error applying operation {operation}: {e}")
+            return expr, f"Error applying {operation.name}: {str(e)}"
     
     def _fallback_step(self,
                       expr: Union[sp.Basic, sp.Eq]) -> Tuple[Optional[sp.Basic], Optional[str], str]:
@@ -263,36 +309,108 @@ class GNNAlgebraSolver:
             Tuple of (next_expression, operation_name, description)
         """
         if isinstance(expr, Eq):
-            # Try to isolate variable
+            # Try to isolate variable using systematic approach
             variables = list(expr.free_symbols)
             if variables:
                 var = variables[0]
                 
-                # Check if we can solve directly
+                # Check if already solved
+                if self._is_solved(expr):
+                    return expr, "COMPLETE", "Already solved"
+                
+                # Try to solve directly first
                 try:
                     solutions = solve(expr, var)
                     if solutions:
-                        if isinstance(solutions, list):
+                        if isinstance(solutions, list) and len(solutions) == 1:
                             solution = solutions[0]
-                        else:
-                            solution = solutions
-                        result = Eq(var, solution)
-                        return result, "ISOLATE_VARIABLE", f"Solved for {var}"
+                            result = Eq(var, solution)
+                            return result, "SOLVE", f"Solved for {var} = {solution}"
+                        elif not isinstance(solutions, list):
+                            result = Eq(var, solutions)
+                            return result, "SOLVE", f"Solved for {var} = {solutions}"
                 except:
                     pass
                 
-                # Try moving terms
-                if isinstance(expr.rhs, sp.Add):
-                    for term in expr.rhs.args:
-                        if var not in term.free_symbols:
-                            result = self.transformer.subtract_from_both_sides(expr, term)
-                            return result, "SUBTRACT_FROM_BOTH_SIDES", f"Subtract {term} from both sides"
-                
+                # Step-by-step approach
+                # 1. Move constants from LHS to RHS
                 if isinstance(expr.lhs, sp.Add):
                     for term in expr.lhs.args:
-                        if var not in term.free_symbols:
-                            result = self.transformer.subtract_from_both_sides(expr, term)
+                        if var not in term.free_symbols and term != 0:
+                            # Move this constant term to RHS
+                            new_lhs = expr.lhs - term
+                            new_rhs = expr.rhs - term
+                            result = Eq(new_lhs, new_rhs)
                             return result, "SUBTRACT_FROM_BOTH_SIDES", f"Subtract {term} from both sides"
+                
+                # 2. Move constants from RHS to LHS
+                if isinstance(expr.rhs, sp.Add):
+                    for term in expr.rhs.args:
+                        if var not in term.free_symbols and term != 0:
+                            # Move this constant term to LHS
+                            new_lhs = expr.lhs - term
+                            new_rhs = expr.rhs - term
+                            result = Eq(new_lhs, new_rhs)
+                            return result, "SUBTRACT_FROM_BOTH_SIDES", f"Subtract {term} from both sides"
+                
+                # 3. Handle single constant on RHS
+                if expr.rhs.is_number and expr.rhs != 0:
+                    # Move RHS to LHS
+                    new_lhs = expr.lhs - expr.rhs
+                    new_rhs = 0
+                    result = Eq(new_lhs, new_rhs)
+                    return result, "SUBTRACT_FROM_BOTH_SIDES", f"Subtract {expr.rhs} from both sides"
+                
+                # 4. Handle coefficient of variable
+                if expr.lhs.is_Mul:
+                    # Check if it's coefficient * variable
+                    var_coeff = None
+                    var_part = None
+                    
+                    for arg in expr.lhs.args:
+                        if arg == var:
+                            var_part = arg
+                        elif var not in arg.free_symbols:
+                            var_coeff = arg if var_coeff is None else var_coeff * arg
+                    
+                    if var_coeff is not None and var_coeff != 1 and var_part == var:
+                        # Divide both sides by coefficient
+                        new_lhs = expr.lhs / var_coeff
+                        new_rhs = expr.rhs / var_coeff
+                        result = Eq(new_lhs, new_rhs)
+                        return result, "DIVIDE_BOTH_SIDES", f"Divide both sides by {var_coeff}"
+                
+                # 5. Expand if there are parentheses
+                if any(isinstance(arg, (sp.Mul, sp.Pow)) for arg in expr.lhs.args if isinstance(expr.lhs, sp.Add)):
+                    expanded_lhs = sp.expand(expr.lhs)
+                    if expanded_lhs != expr.lhs:
+                        result = Eq(expanded_lhs, expr.rhs)
+                        return result, "EXPAND", "Expand left side"
+                
+                # 6. Simplify both sides
+                simplified_lhs = sp.simplify(expr.lhs)
+                simplified_rhs = sp.simplify(expr.rhs)
+                if simplified_lhs != expr.lhs or simplified_rhs != expr.rhs:
+                    result = Eq(simplified_lhs, simplified_rhs)
+                    return result, "SIMPLIFY", "Simplify both sides"
+        
+        else:
+            # Handle expression simplification
+            try:
+                simplified = sp.simplify(expr)
+                if simplified != expr:
+                    return simplified, "SIMPLIFY", "Simplified expression"
+                
+                expanded = sp.expand(expr)
+                if expanded != expr:
+                    return expanded, "EXPAND", "Expanded expression"
+                    
+                factored = sp.factor(expr)
+                if factored != expr and len(str(factored)) <= len(str(expr)):
+                    return factored, "FACTOR", "Factored expression"
+                    
+            except:
+                pass
         
         return None, None, "No fallback step available"
     
@@ -323,21 +441,35 @@ class GNNAlgebraSolver:
             variables = list(expr.free_symbols)
             if len(variables) == 1:
                 var = variables[0]
-                # Check if it's in the form var = value
+                # Check if it's in the form var = value (variable isolated)
                 if expr.lhs == var and var not in expr.rhs.free_symbols:
                     return True
                 if expr.rhs == var and var not in expr.lhs.free_symbols:
                     return True
+                
+                # NOT solved if it's still in the form like 2*x + 5 = 9
+                # Only consider it solved if the variable is actually isolated
+                return False
+                    
             elif len(variables) == 0:
                 # No variables, check if it's a true statement
-                return expr.lhs == expr.rhs
+                try:
+                    return bool(expr.lhs == expr.rhs)
+                except:
+                    return False
         else:
             # For expressions, check if fully simplified
             try:
                 simplified = sp.simplify(expr)
-                return simplified == expr and not any(
-                    isinstance(expr, (sp.Add, sp.Mul)) for expr in sp.preorder_traversal(expr)
-                )
+                # Consider it solved if it's a simple form
+                if simplified.is_number:
+                    return True
+                if simplified.is_symbol:
+                    return True
+                # If it's the same after simplification and reasonably simple
+                if simplified == expr and len(str(simplified)) < 10:
+                    return True
+                return False
             except:
                 return False
         
@@ -406,6 +538,100 @@ class GNNAlgebraSolver:
                         return arg
         
         return None
+
+    def _smart_move_terms(self, expr: sp.Eq, var: sp.Symbol) -> sp.Eq:
+        """Smartly move terms to isolate a variable.
+        
+        Args:
+            expr: Equation to manipulate
+            var: Variable to isolate
+            
+        Returns:
+            Modified equation
+        """
+        try:
+            # Move all terms not containing the variable to the RHS
+            lhs_terms = []
+            rhs_terms = []
+            
+            # Process LHS
+            if isinstance(expr.lhs, sp.Add):
+                for term in expr.lhs.args:
+                    if var in term.free_symbols:
+                        lhs_terms.append(term)
+                    else:
+                        rhs_terms.append(-term)  # Move to RHS with sign change
+            else:
+                if var in expr.lhs.free_symbols:
+                    lhs_terms.append(expr.lhs)
+                else:
+                    rhs_terms.append(-expr.lhs)
+            
+            # Process RHS
+            if isinstance(expr.rhs, sp.Add):
+                for term in expr.rhs.args:
+                    if var in term.free_symbols:
+                        lhs_terms.append(-term)  # Move to LHS with sign change
+                    else:
+                        rhs_terms.append(term)
+            else:
+                if var in expr.rhs.free_symbols:
+                    lhs_terms.append(-expr.rhs)
+                else:
+                    rhs_terms.append(expr.rhs)
+            
+            # Combine terms
+            new_lhs = sum(lhs_terms) if lhs_terms else 0
+            new_rhs = sum(rhs_terms) if rhs_terms else 0
+            
+            return Eq(new_lhs, new_rhs)
+            
+        except Exception as e:
+            logger.error(f"Error in smart term moving: {e}")
+            return expr
+    
+    def _apply_quadratic_formula(self, expr: sp.Eq) -> Optional[sp.Eq]:
+        """Apply quadratic formula if the equation is quadratic.
+        
+        Args:
+            expr: Equation to check
+            
+        Returns:
+            Solution using quadratic formula or None if not applicable
+        """
+        try:
+            # Rearrange to standard form: ax² + bx + c = 0
+            standard_form = expr.lhs - expr.rhs
+            
+            # Check if it's quadratic
+            variables = list(standard_form.free_symbols)
+            if len(variables) != 1:
+                return None
+            
+            var = variables[0]
+            coeffs = sp.Poly(standard_form, var).all_coeffs()
+            
+            if len(coeffs) == 3:  # ax² + bx + c
+                a, b, c = coeffs
+                if a != 0:
+                    # Apply quadratic formula: x = (-b ± √(b² - 4ac)) / (2a)
+                    discriminant = b**2 - 4*a*c
+                    if discriminant >= 0:
+                        sqrt_disc = sp.sqrt(discriminant)
+                        x1 = (-b + sqrt_disc) / (2*a)
+                        x2 = (-b - sqrt_disc) / (2*a)
+                        
+                        if x1 == x2:
+                            return Eq(var, x1)
+                        else:
+                            # Return both solutions as a set
+                            return Eq(var, sp.FiniteSet(x1, x2))
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error applying quadratic formula: {e}")
+            return None
 
 
 class InteractiveSolver:

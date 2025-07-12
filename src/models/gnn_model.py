@@ -14,7 +14,7 @@ import math
 
 
 class GraphEncoder(nn.Module):
-    """Graph encoder using Graph Convolutional or Attention layers."""
+    """Enhanced graph encoder using Graph Convolutional or Attention layers with residual connections."""
     
     def __init__(self,
                  input_dim: int = 20,  # Node feature dimension
@@ -22,8 +22,10 @@ class GraphEncoder(nn.Module):
                  output_dim: int = 256,
                  num_layers: int = 3,
                  dropout: float = 0.1,
-                 conv_type: str = "gcn",  # "gcn" or "gat"
-                 aggregation: str = "mean"):  # "mean", "sum", or "max"
+                 conv_type: str = "gcn",  # "gcn", "gat", or "gat_multi"
+                 aggregation: str = "mean",  # "mean", "sum", "max", or "attention"
+                 use_residual: bool = True,
+                 use_layer_norm: bool = True):
         super().__init__()
         
         self.input_dim = input_dim
@@ -33,6 +35,8 @@ class GraphEncoder(nn.Module):
         self.dropout = dropout
         self.conv_type = conv_type
         self.aggregation = aggregation
+        self.use_residual = use_residual
+        self.use_layer_norm = use_layer_norm
         
         # Create convolutional layers
         self.convs = nn.ModuleList()
@@ -42,6 +46,10 @@ class GraphEncoder(nn.Module):
             self.convs.append(GCNConv(input_dim, hidden_dim))
         elif conv_type == "gat":
             self.convs.append(GATConv(input_dim, hidden_dim, heads=4, concat=False))
+        elif conv_type == "gat_multi":
+            self.convs.append(GATConv(input_dim, hidden_dim, heads=8, concat=True))
+            # Adjust hidden_dim for multi-head concatenation
+            hidden_dim = hidden_dim * 8
         else:
             raise ValueError(f"Unknown conv_type: {conv_type}")
         
@@ -51,6 +59,9 @@ class GraphEncoder(nn.Module):
                 self.convs.append(GCNConv(hidden_dim, hidden_dim))
             elif conv_type == "gat":
                 self.convs.append(GATConv(hidden_dim, hidden_dim, heads=4, concat=False))
+            elif conv_type == "gat_multi":
+                self.convs.append(GATConv(hidden_dim, hidden_dim, heads=8, concat=True))
+                hidden_dim = hidden_dim * 8
         
         # Output layer
         if num_layers > 1:
@@ -58,13 +69,18 @@ class GraphEncoder(nn.Module):
                 self.convs.append(GCNConv(hidden_dim, output_dim))
             elif conv_type == "gat":
                 self.convs.append(GATConv(hidden_dim, output_dim, heads=1, concat=False))
+            elif conv_type == "gat_multi":
+                self.convs.append(GATConv(hidden_dim, output_dim, heads=1, concat=False))
         
-        # Batch normalization layers
-        self.batch_norms = nn.ModuleList([
-            nn.BatchNorm1d(hidden_dim) for _ in range(num_layers - 1)
-        ])
-        if num_layers > 1:
-            self.batch_norms.append(nn.BatchNorm1d(output_dim))
+        # Layer normalization layers
+        if use_layer_norm:
+            self.layer_norms = nn.ModuleList([
+                nn.LayerNorm(hidden_dim) for _ in range(num_layers - 1)
+            ])
+            if num_layers > 1:
+                self.layer_norms.append(nn.LayerNorm(output_dim))
+        else:
+            self.layer_norms = None
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
@@ -76,11 +92,53 @@ class GraphEncoder(nn.Module):
             self.aggregate = global_add_pool
         elif aggregation == "max":
             self.aggregate = global_max_pool
+        elif aggregation == "attention":
+            self.attention_weights = nn.Linear(output_dim, 1)
+            self.aggregate = self._attention_pool
         else:
             raise ValueError(f"Unknown aggregation: {aggregation}")
+        
+        # Output projection for attention aggregation
+        if aggregation == "attention":
+            self.output_projection = nn.Linear(output_dim, output_dim)
+        else:
+            self.output_projection = None
+    
+    def _attention_pool(self, x: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
+        """Attention-based graph pooling."""
+        # Compute attention weights
+        attention_weights = self.attention_weights(x)  # [num_nodes, 1]
+        
+        # Apply softmax within each batch
+        batch_size = batch.max().item() + 1
+        pooled_features = []
+        
+        for i in range(batch_size):
+            mask = (batch == i)
+            if mask.sum() > 0:
+                batch_weights = attention_weights[mask]
+                batch_features = x[mask]
+                
+                # Softmax attention weights
+                attention_scores = F.softmax(batch_weights, dim=0)
+                
+                # Weighted sum
+                pooled = torch.sum(batch_features * attention_scores, dim=0)
+                pooled_features.append(pooled)
+            else:
+                # Empty batch - use zero vector
+                pooled_features.append(torch.zeros_like(x[0]))
+        
+        pooled = torch.stack(pooled_features)
+        
+        # Apply output projection
+        if self.output_projection is not None:
+            pooled = self.output_projection(pooled)
+        
+        return pooled
     
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the graph encoder.
+        """Enhanced forward pass through the graph encoder with residual connections.
         
         Args:
             x: Node features [num_nodes, input_dim]
@@ -90,15 +148,29 @@ class GraphEncoder(nn.Module):
         Returns:
             Graph-level representations [batch_size, output_dim]
         """
-        # Apply convolutional layers
+        # Store initial input for residual connection
+        if self.use_residual and self.input_dim == self.hidden_dim:
+            residual = x
+        
+        # Apply convolutional layers with residual connections
         for i, conv in enumerate(self.convs):
+            x_prev = x
+            
+            # Apply convolution
             x = conv(x, edge_index)
             
-            # Apply batch norm and activation (except last layer)
+            # Apply layer normalization if enabled
+            if self.layer_norms is not None and i < len(self.layer_norms):
+                x = self.layer_norms[i](x)
+            
+            # Apply activation and dropout (except last layer)
             if i < len(self.convs) - 1:
-                x = self.batch_norms[i](x)
                 x = F.relu(x)
                 x = self.dropout(x)
+                
+                # Add residual connection if dimensions match
+                if self.use_residual and x.size(-1) == x_prev.size(-1):
+                    x = x + x_prev
         
         # Aggregate node features to graph level
         graph_repr = self.aggregate(x, batch)

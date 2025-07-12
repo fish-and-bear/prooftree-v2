@@ -1,0 +1,208 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D3.js Graph Visualization Demo Index</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 15px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .demo-card {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 10px;
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .demo-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .demo-card h3 {
+            margin: 0 0 10px 0;
+            color: #495057;
+            font-size: 1.2rem;
+        }
+        
+        .demo-card p {
+            margin: 0 0 15px 0;
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        
+        .demo-link {
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            transition: background-color 0.2s;
+        }
+        
+        .demo-link:hover {
+            background: #0056b3;
+        }
+        
+        .features {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+        
+        .features h3 {
+            margin: 0 0 15px 0;
+            color: #1976d2;
+        }
+        
+        .features ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .features li {
+            margin: 5px 0;
+            color: #424242;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧮 Graph Neural Algebra Tutor</h1>
+            <p>D3.js Graph Visualization Demo Collection</p>
+        </div>
+        
+        <div class="content">
+            <h2>📊 Available Visualizations</h2>
+            <p>Click on any visualization below to see the interactive D3.js graph representation of mathematical expressions.</p>
+            
+            <div class="demo-grid">
+
+                <div class="demo-card">
+                    <h3>Complex Expression</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_complex_expression.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Fraction</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_fraction.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Function</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_function.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Linear Equation</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_linear_equation.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Multiplication</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_multiplication.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Power</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_power.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Quadratic Expression</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_quadratic_expression.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Simple Addition</h3>
+                    <p>Interactive D3.js visualization of mathematical expression</p>
+                    <a href="demo_simple_addition.html" class="demo-link" target="_blank">View Visualization</a>
+                </div>
+
+            </div>
+            
+            <div class="features">
+                <h3>🎮 Interactive Features</h3>
+                <ul>
+                    <li><strong>Zoom:</strong> Use mouse wheel to zoom in/out</li>
+                    <li><strong>Pan:</strong> Drag the background to pan around</li>
+                    <li><strong>Node Interaction:</strong> Drag nodes to reposition them</li>
+                    <li><strong>Hover Effects:</strong> Hover over nodes to highlight connections</li>
+                    <li><strong>Node Details:</strong> Click nodes to see detailed information</li>
+                    <li><strong>Responsive:</strong> Works on different screen sizes</li>
+                </ul>
+            </div>
+            
+            <div class="features">
+                <h3>🎨 Visual Design</h3>
+                <ul>
+                    <li><strong>Color Coding:</strong> Different node types have distinct colors</li>
+                    <li><strong>Node Shapes:</strong> Different shapes for different mathematical elements</li>
+                    <li><strong>Force Layout:</strong> Automatic positioning using D3.js force simulation</li>
+                    <li><strong>Smooth Animations:</strong> Elegant transitions and animations</li>
+                    <li><strong>Legend:</strong> Clear legend explaining node types</li>
+                    <li><strong>Statistics:</strong> Real-time graph statistics and information</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

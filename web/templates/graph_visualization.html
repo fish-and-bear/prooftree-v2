@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graph Neural Algebra Tutor - D3.js Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2rem;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+        }
+        
+        .controls {
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .control-group {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .control-group label {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .control-group button {
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        .control-group button:hover {
+            background: #0056b3;
+        }
+        
+        .visualization {
+            padding: 20px;
+            min-height: 600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        #graph-container {
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .info-panel {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e3f2fd;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .info-panel h3 {
+            margin: 0 0 10px 0;
+            color: #1976d2;
+        }
+        
+        .info-panel p {
+            margin: 5px 0;
+            color: #424242;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #f44336;
+            margin: 20px 0;
+        }
+        
+        .success {
+            background: #e8f5e8;
+            color: #2e7d32;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #4caf50;
+            margin: 20px 0;
+        }
+        
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        
+        .legend {
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .legend h4 {
+            margin: 0 0 15px 0;
+            color: #495057;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+            border: 1px solid #333;
+        }
+        
+        .legend-text {
+            font-size: 14px;
+            color: #495057;
+        }
+        
+        @media (max-width: 768px) {
+            .control-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .control-group input, .control-group select, .control-group button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧮 Graph Neural Algebra Tutor</h1>
+            <p>Interactive D3.js Visualization of Mathematical Expression Graphs</p>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="expression-input">Expression:</label>
+                <input type="text" id="expression-input" placeholder="Enter expression (e.g., 2*x + 5 = 9)" style="width: 300px;">
+                
+                <label for="example-select">Quick Examples:</label>
+                <select id="example-select">
+                    <option value="">Choose an example...</option>
+                    <option value="x + 2">x + 2</option>
+                    <option value="2*x + 5">2*x + 5</option>
+                    <option value="x**2 + 3*x + 2">x² + 3x + 2</option>
+                    <option value="2*x + 5 = 9">2x + 5 = 9</option>
+                    <option value="sin(x) + cos(x)">sin(x) + cos(x)</option>
+                    <option value="3*(x + 2) = 15">3(x + 2) = 15</option>
+                </select>
+                
+                <button onclick="visualizeExpression()">Visualize</button>
+                <button onclick="clearVisualization()">Clear</button>
+            </div>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Processing expression and generating graph...</p>
+        </div>
+        
+        <div class="visualization">
+            <div id="graph-container"></div>
+            
+            <div class="info-panel" id="info-panel" style="display: none;">
+                <h3>Graph Information</h3>
+                <div id="graph-stats"></div>
+            </div>
+            
+            <div class="legend" id="legend" style="display: none;">
+                <h4>Node Types</h4>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #ff7f0e;"></div>
+                    <div class="legend-text">Operators (+, -, *, /, =)</div>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #2ca02c;"></div>
+                    <div class="legend-text">Variables (x, y, z)</div>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #1f77b4;"></div>
+                    <div class="legend-text">Constants (numbers)</div>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #9467bd;"></div>
+                    <div class="legend-text">Functions (sin, cos, etc.)</div>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #d62728;"></div>
+                    <div class="legend-text">Equations (=)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/d3_graph.js"></script>
+    <script>
+        let visualizer = null;
+        
+        // Initialize visualization when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeVisualization();
+            setupEventListeners();
+        });
+        
+        function initializeVisualization() {
+            const container = document.getElementById('graph-container');
+            visualizer = new D3GraphVisualizer('graph-container', 800, 600);
+        }
+        
+        function setupEventListeners() {
+            // Example selector
+            document.getElementById('example-select').addEventListener('change', function() {
+                const selectedValue = this.value;
+                if (selectedValue) {
+                    document.getElementById('expression-input').value = selectedValue;
+                    visualizeExpression();
+                }
+            });
+            
+            // Enter key in input
+            document.getElementById('expression-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    visualizeExpression();
+                }
+            });
+        }
+        
+        function showLoading() {
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('info-panel').style.display = 'none';
+            document.getElementById('legend').style.display = 'none';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+        
+        function showError(message) {
+            hideLoading();
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.innerHTML = `<strong>Error:</strong> ${message}`;
+            
+            const container = document.querySelector('.visualization');
+            container.insertBefore(errorDiv, container.firstChild);
+            
+            // Remove error after 5 seconds
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+        
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.innerHTML = `<strong>Success:</strong> ${message}`;
+            
+            const container = document.querySelector('.visualization');
+            container.insertBefore(successDiv, container.firstChild);
+            
+            // Remove success after 3 seconds
+            setTimeout(() => {
+                successDiv.remove();
+            }, 3000);
+        }
+        
+        function visualizeExpression() {
+            const expression = document.getElementById('expression-input').value.trim();
+            
+            if (!expression) {
+                showError('Please enter an expression to visualize.');
+                return;
+            }
+            
+            showLoading();
+            
+            // Simulate API call to get graph data
+            // In a real implementation, this would call your backend
+            setTimeout(() => {
+                try {
+                    // Generate mock graph data for demonstration
+                    const graphData = generateMockGraphData(expression);
+                    
+                    // Render the graph
+                    visualizer.render(graphData);
+                    
+                    // Show information panel
+                    showGraphInfo(graphData);
+                    
+                    // Show legend
+                    document.getElementById('legend').style.display = 'block';
+                    
+                    hideLoading();
+                    showSuccess('Graph visualization generated successfully!');
+                    
+                } catch (error) {
+                    showError('Failed to generate graph visualization: ' + error.message);
+                }
+            }, 1000);
+        }
+        
+        function generateMockGraphData(expression) {
+            // This is a simplified mock data generator
+            // In practice, this would come from your Python backend
+            
+            const nodes = [];
+            const links = [];
+            
+            // Parse expression and create nodes
+            const tokens = expression.replace(/\s+/g, '').split(/([+\-*/=()^])/).filter(t => t);
+            
+            tokens.forEach((token, index) => {
+                let type = 'unknown';
+                let label = token;
+                
+                if (['+', '-', '*', '/', '='].includes(token)) {
+                    type = 'operator';
+                } else if (token.match(/^[a-zA-Z]$/)) {
+                    type = 'variable';
+                } else if (token.match(/^\d+$/)) {
+                    type = 'constant';
+                } else if (token.match(/^(sin|cos|tan|log|exp)$/)) {
+                    type = 'function';
+                }
+                
+                nodes.push({
+                    id: index,
+                    label: label,
+                    type: type,
+                    features: [Math.random(), Math.random(), Math.random()],
+                    x: Math.random() * 800,
+                    y: Math.random() * 600
+                });
+            });
+            
+            // Create links between adjacent nodes
+            for (let i = 0; i < nodes.length - 1; i++) {
+                links.push({
+                    source: i,
+                    target: i + 1,
+                    id: `${i}-${i + 1}`
+                });
+            }
+            
+            return { nodes, links };
+        }
+        
+        function showGraphInfo(graphData) {
+            const statsDiv = document.getElementById('graph-stats');
+            const nodeCount = graphData.nodes.length;
+            const edgeCount = graphData.links.length;
+            
+            const nodeTypes = {};
+            graphData.nodes.forEach(node => {
+                nodeTypes[node.type] = (nodeTypes[node.type] || 0) + 1;
+            });
+            
+            statsDiv.innerHTML = `
+                <p><strong>Total Nodes:</strong> ${nodeCount}</p>
+                <p><strong>Total Edges:</strong> ${edgeCount}</p>
+                <p><strong>Node Types:</strong></p>
+                <ul>
+                    ${Object.entries(nodeTypes).map(([type, count]) => 
+                        `<li>${type.charAt(0).toUpperCase() + type.slice(1)}: ${count}</li>`
+                    ).join('')}
+                </ul>
+            `;
+            
+            document.getElementById('info-panel').style.display = 'block';
+        }
+        
+        function clearVisualization() {
+            if (visualizer) {
+                visualizer.clear();
+            }
+            document.getElementById('info-panel').style.display = 'none';
+            document.getElementById('legend').style.display = 'none';
+            document.getElementById('expression-input').value = '';
+            document.getElementById('example-select').value = '';
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (visualizer) {
+                const container = document.getElementById('graph-container');
+                const rect = container.getBoundingClientRect();
+                visualizer.resize(rect.width, rect.height);
+            }
+        });
+    </script>
+</body>
+</html> 
