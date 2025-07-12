@@ -312,7 +312,8 @@ export default function Home() {
     
     try {
       // Get all steps from GNN solver
-      const steps = gnnSolver.solveStepByStep(expression);
+      const result = await gnnSolver.solveStepByStep(expression);
+      const steps = result.steps;
       setGnnSteps(steps);
       setCurrentGnnStep(0);
       
@@ -329,11 +330,11 @@ export default function Home() {
       for (let i = 0; i < steps.length; i++) {
         setCurrentGnnStep(i);
         const step = steps[i];
-        setEvaluationMessage(`Step ${i + 1}/${steps.length}: ${step.operation} - ${step.description} (${(step.confidence * 100).toFixed(0)}% confidence)`);
+        setEvaluationMessage(`Step ${i + 1}/${steps.length}: ${step.operation || 'Unknown'} - ${step.explanation} (${((step.confidence || 0) * 100).toFixed(0)}% confidence)`);
         
         // Update the expression display to show the current step
-        if (step.afterExpression !== step.beforeExpression) {
-          setExpression(step.afterExpression);
+        if (step.expression !== expression) {
+          setExpression(step.expression);
         }
         
         await wait(2000); // Longer pause to see the transformation
@@ -343,9 +344,9 @@ export default function Home() {
       if (steps.length > 0) {
         const lastStep = steps[steps.length - 1];
         if (lastStep.operation === 'SOLUTION_FOUND') {
-          setEvaluationMessage(`✅ Solution found: ${lastStep.afterExpression}`);
+          setEvaluationMessage(`✅ Solution found: ${lastStep.expression}`);
         } else {
-          setEvaluationMessage(`✅ GNN solution complete! Final expression: ${lastStep.afterExpression}`);
+          setEvaluationMessage(`✅ GNN solution complete! Final expression: ${lastStep.expression}`);
         }
       }
       
@@ -359,7 +360,7 @@ export default function Home() {
 
   // Handle GNN step completion
   const handleGNNStepComplete = (step: AlgebraicStep) => {
-    setEvaluationMessage(`GNN applied: ${step.operation} - ${step.description}`);
+    setEvaluationMessage(`GNN applied: ${step.operation || 'Unknown'} - ${step.explanation}`);
   };
 
   // Handle GNN prediction
@@ -596,23 +597,23 @@ export default function Home() {
                       }`}>
                         {index + 1}
                       </div>
-                      <div className="font-semibold text-gray-800">{step.operation}</div>
-                      <div className="text-sm text-gray-500">({(step.confidence * 100).toFixed(1)}% confidence)</div>
+                      <div className="font-semibold text-gray-800">{step.operation || 'Unknown'}</div>
+                      <div className="text-sm text-gray-500">({((step.confidence || 0) * 100).toFixed(1)}% confidence)</div>
                     </div>
                     {index === currentGnnStep && (
-                      <div className="animate-pulse text-green-600">🔄 Processing...</div>
+                      <div className="animate-pulse text-green-600">�� Processing...</div>
                     )}
                   </div>
                   <div className="ml-11">
-                    <div className="text-sm text-gray-600 mb-2">{step.reasoning}</div>
+                    <div className="text-sm text-gray-600 mb-2">{step.explanation}</div>
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <span className="font-medium text-gray-700">Before:</span>
-                        <div className="font-mono bg-gray-100 p-2 rounded mt-1">{step.beforeExpression}</div>
+                        <span className="font-medium text-gray-700">Expression:</span>
+                        <div className="font-mono bg-gray-100 p-2 rounded mt-1">{step.expression}</div>
                       </div>
                       <div>
-                        <span className="font-medium text-gray-700">After:</span>
-                        <div className="font-mono bg-green-100 p-2 rounded mt-1">{step.afterExpression}</div>
+                        <span className="font-medium text-gray-700">Strategy:</span>
+                        <div className="font-mono bg-green-100 p-2 rounded mt-1">{step.strategy || 'GNN'}</div>
                       </div>
                     </div>
                   </div>
