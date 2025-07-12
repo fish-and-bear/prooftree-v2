@@ -426,6 +426,39 @@ export class GNNSolver {
         };
       }
       
+      // For linear equations, break down the solving process
+      if (analysis.isLinear) {
+        // Check if we need to isolate the variable
+        if (left.includes('+') || left.includes('-')) {
+          return {
+            type: 'ISOLATE_VARIABLE',
+            confidence: 0.90,
+            explanation: 'Isolate the variable by moving constants to the other side'
+          };
+        }
+        
+        // Check if we need to divide by coefficient
+        if (left.match(/^\d+x$/)) {
+          return {
+            type: 'DIVIDE_BY_COEFFICIENT',
+            confidence: 0.90,
+            explanation: 'Divide both sides by the coefficient of x'
+          };
+        }
+      }
+      
+      // For quadratic equations, break down the solving process
+      if (analysis.isQuadratic) {
+        // Check if we need to apply quadratic formula
+        if (left.match(/x\^2/)) {
+          return {
+            type: 'APPLY_QUADRATIC_FORMULA',
+            confidence: 0.95,
+            explanation: 'Apply quadratic formula to solve quadratic equation'
+          };
+        }
+      }
+      
       // Now determine solving strategy based on degree
       if (analysis.isQuadratic) {
         return {
@@ -451,8 +484,17 @@ export class GNNSolver {
         };
       }
       
-      // Simple equations
+      // Simple equations - break down further
       if (analysis.hasVariables && analysis.hasConstants) {
+        // Check if we can simplify the expression first
+        if (left.includes('+') || left.includes('-') || left.includes('*') || left.includes('/')) {
+          return {
+            type: 'SIMPLIFY_EXPRESSION',
+            confidence: 0.80,
+            explanation: 'Simplify the expression before solving'
+          };
+        }
+        
         return {
           type: 'SOLVE',
           confidence: 0.80,
@@ -546,6 +588,18 @@ export class GNNSolver {
         
         case 'EVALUATE':
           return this.evaluateWithMathJS(expression);
+        
+        case 'ISOLATE_VARIABLE':
+          return this.isolateVariableWithMathJS(expression);
+        
+        case 'DIVIDE_BY_COEFFICIENT':
+          return this.divideByCoefficientWithMathJS(expression);
+        
+        case 'APPLY_QUADRATIC_FORMULA':
+          return this.applyQuadraticFormulaWithMathJS(expression);
+        
+        case 'SIMPLIFY_EXPRESSION':
+          return this.simplifyExpressionWithMathJS(expression);
         
         default:
           return {
@@ -1112,5 +1166,164 @@ export class GNNSolver {
       supportedOperations: [...this.limitations.supportedOperations],
       fallbackStrategies: ['MathJS solve', 'Pattern matching', 'Manual solving']
     };
+  }
+
+  /**
+   * Isolate variable by moving constants to other side
+   */
+  private isolateVariableWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      
+      // For expressions like "x + 3 = 0", move the constant
+      if (left.includes('+')) {
+        const parts = left.split('+').map(s => s.trim());
+        const variable = parts.find(p => p.includes('x'));
+        const constant = parts.find(p => !p.includes('x'));
+        
+        if (variable && constant) {
+          const newLeft = variable;
+          const newRight = `-${constant}`;
+          
+          return {
+            expression: `${newLeft} = ${newRight}`,
+            explanation: `Moved constant ${constant} to right side: ${left} = ${right} → ${newLeft} = ${newRight}`
+          };
+        }
+      }
+      
+      if (left.includes('-')) {
+        const parts = left.split('-').map(s => s.trim());
+        const variable = parts[0];
+        const constant = parts[1];
+        
+        if (variable && constant) {
+          const newLeft = variable;
+          const newRight = constant;
+          
+          return {
+            expression: `${newLeft} = ${newRight}`,
+            explanation: `Moved constant ${constant} to right side: ${left} = ${right} → ${newLeft} = ${newRight}`
+          };
+        }
+      }
+      
+      return {
+        expression: expression,
+        explanation: `Could not isolate variable in: ${expression}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error isolating variable: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Divide both sides by coefficient
+   */
+  private divideByCoefficientWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      
+      // For expressions like "3x = -9", divide by coefficient
+      const coefficientMatch = left.match(/^(\d+)x$/);
+      if (coefficientMatch) {
+        const coefficient = parseFloat(coefficientMatch[1]);
+        const rightValue = parseFloat(right);
+        const solution = rightValue / coefficient;
+        
+        return {
+          expression: `x = ${solution.toFixed(3)}`,
+          explanation: `Divided both sides by ${coefficient}: ${left} = ${right} → x = ${rightValue}/${coefficient} = ${solution.toFixed(3)}`
+        };
+      }
+      
+      return {
+        expression: expression,
+        explanation: `Could not divide by coefficient in: ${expression}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error dividing by coefficient: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Apply quadratic formula step by step
+   */
+  private applyQuadraticFormulaWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      const equation = `${left} - (${right})`;
+      
+      const parsed = parse(equation);
+      const coefficients = this.extractQuadraticCoefficients(parsed);
+      
+      if (coefficients) {
+        const { a, b, c } = coefficients;
+        const discriminant = b * b - 4 * a * c;
+        
+        if (discriminant > 0) {
+          const x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+          const x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+          return {
+            expression: `x = ${x1.toFixed(3)} or x = ${x2.toFixed(3)}`,
+            explanation: `Applied quadratic formula: x = (-${b} ± √(${b}² - 4×${a}×${c})) / (2×${a}) = ${x1.toFixed(3)} or ${x2.toFixed(3)}`
+          };
+        } else if (discriminant === 0) {
+          const x = -b / (2 * a);
+          return {
+            expression: `x = ${x.toFixed(3)}`,
+            explanation: `Applied quadratic formula: x = -${b} / (2×${a}) = ${x.toFixed(3)} (double root)`
+          };
+        } else {
+          const realPart = -b / (2 * a);
+          const imagPart = Math.sqrt(-discriminant) / (2 * a);
+          return {
+            expression: `x = ${realPart.toFixed(3)} ± ${imagPart.toFixed(3)}i`,
+            explanation: `Applied quadratic formula: complex solutions x = ${realPart.toFixed(3)} ± ${imagPart.toFixed(3)}i`
+          };
+        }
+      }
+      
+      return {
+        expression: expression,
+        explanation: `Could not apply quadratic formula to: ${expression}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error applying quadratic formula: ${(error as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * Simplify expression before solving
+   */
+  private simplifyExpressionWithMathJS(expression: string): { expression: string; explanation: string } {
+    try {
+      const [left, right] = expression.split('=').map(s => s.trim());
+      
+      // Simplify the left side
+      const leftSimplified = simplify(left);
+      const rightSimplified = simplify(right);
+      
+      const newExpression = `${leftSimplified} = ${rightSimplified}`;
+      
+      return {
+        expression: newExpression,
+        explanation: `Simplified expression: ${left} = ${right} → ${leftSimplified} = ${rightSimplified}`
+      };
+    } catch (error) {
+      return {
+        expression: expression,
+        explanation: `Error simplifying expression: ${(error as Error).message}`
+      };
+    }
   }
 } 
