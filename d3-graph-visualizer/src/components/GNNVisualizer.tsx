@@ -10,34 +10,37 @@ interface GNNVisualizerProps {
   onPrediction?: (prediction: GNNPrediction) => void;
   showConfidence?: boolean;
   showStepDetails?: boolean;
+  educationalMode?: boolean;
 }
 
-interface GNNNode {
+interface GraphNode {
   id: string;
-  type: 'input' | 'hidden' | 'output' | 'feature';
   label: string;
-  value?: number;
+  type: 'expression' | 'operation' | 'result' | 'step';
+  value?: string;
   confidence?: number;
-  layer: number;
+  stepNumber?: number;
   explanation?: string;
+  color?: string;
 }
 
-interface GNNEdge {
+interface GraphEdge {
   source: string;
   target: string;
-  weight: number;
-  type: 'forward' | 'attention' | 'skip';
-  attention?: number;
+  type: 'transformation' | 'step' | 'operation';
+  label?: string;
+  weight?: number;
 }
 
-interface StepDetail {
+interface StepVisualization {
   stepNumber: number;
-  operation: string;
   beforeExpression: string;
   afterExpression: string;
-  confidence: number;
+  operation: string;
   explanation: string;
-  timeMs: number;
+  confidence: number;
+  graphNodes: GraphNode[];
+  graphEdges: GraphEdge[];
 }
 
 export const GNNVisualizer: React.FC<GNNVisualizerProps> = ({ 
@@ -45,20 +48,23 @@ export const GNNVisualizer: React.FC<GNNVisualizerProps> = ({
   onStepComplete, 
   onPrediction,
   showConfidence = true,
-  showStepDetails = true
+  showStepDetails = true,
+  educationalMode = true
 }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [gnnSteps, setGnnSteps] = useState<AlgebraicStep[]>([]);
   const [predictions, setPredictions] = useState<GNNPrediction[]>([]);
-  const [stepDetails, setStepDetails] = useState<StepDetail[]>([]);
-  const [selectedNode, setSelectedNode] = useState<GNNNode | null>(null);
+  const [stepVisualizations, setStepVisualizations] = useState<StepVisualization[]>([]);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [processingProgress, setProcessingProgress] = useState<number>(0);
+  const [currentExpression, setCurrentExpression] = useState<string>(expression);
+  const [solvingHistory, setSolvingHistory] = useState<StepVisualization[]>([]);
   
   const solver = new GNNSolver();
 
-  // Enhanced feature extraction with more detailed analysis
+  // Enhanced feature extraction with educational focus
   const extractExpressionFeatures = (expr: string) => {
     const features = {
       hasVariables: /[a-zA-Z]/.test(expr),
@@ -82,212 +88,262 @@ export const GNNVisualizer: React.FC<GNNVisualizerProps> = ({
     return features;
   };
 
-  // Generate enhanced GNN nodes and edges with attention mechanisms
-  const generateGNNGraph = (expr: string) => {
-    const nodes: GNNNode[] = [];
-    const edges: GNNEdge[] = [];
+  // Generate step-by-step visualization graph
+  const generateStepVisualization = (stepNumber: number, beforeExpr: string, afterExpr: string, operation: string, explanation: string, confidence: number): StepVisualization => {
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
     
-    // Extract features
-    const features = extractExpressionFeatures(expr);
-
-    // Input layer (features) with explanations
-    const featureExplanations = {
-      hasVariables: "Contains variables (x, y, etc.)",
-      hasConstants: "Contains numerical constants",
-      hasExponents: "Contains exponential terms",
-      hasParentheses: "Contains grouped expressions",
-      hasFractions: "Contains fractional expressions",
-      hasEquality: "Is an equation (contains =)",
-      hasInequality: "Contains inequality operators",
-      hasSquareRoot: "Contains square root operations",
-      hasLogarithms: "Contains logarithmic functions",
-      variableCount: "Number of variable occurrences",
-      operatorCount: "Number of mathematical operators",
-      complexity: "Expression length/complexity",
-      depth: "Nesting depth of parentheses",
-      isLinear: "Is a linear expression",
-      isQuadratic: "Is a quadratic expression",
-      hasMultipleVariables: "Contains multiple different variables"
-    };
-
-    Object.entries(features).forEach(([key, value], index) => {
-      const nodeId = `feature_${index}`;
-      nodes.push({
-        id: nodeId,
-        type: 'feature',
-        label: key,
-        value: typeof value === 'number' ? value : (value ? 1 : 0),
-        confidence: typeof value === 'number' ? Math.min(value / 10, 1) : (value ? 0.8 : 0.2),
-        layer: 0,
-        explanation: featureExplanations[key as keyof typeof featureExplanations]
-      });
+    // Add step number node
+    const stepNodeId = `step_${stepNumber}`;
+    nodes.push({
+      id: stepNodeId,
+      label: `Step ${stepNumber}`,
+      type: 'step',
+      stepNumber: stepNumber,
+      color: '#4299e1'
     });
-
-    // Hidden layers with attention mechanisms
-    const hiddenLayerSize = 12;
-    for (let layer = 1; layer <= 3; layer++) {
-      for (let i = 0; i < hiddenLayerSize; i++) {
-        const nodeId = `hidden_${layer}_${i}`;
-        const activation = Math.random() * 0.6 + 0.2;
-        nodes.push({
-          id: nodeId,
-          type: 'hidden',
-          label: `H${layer}.${i}`,
-          value: activation,
-          confidence: activation,
-          layer,
-          explanation: `Hidden layer ${layer} neuron ${i} (activation: ${activation.toFixed(2)})`
-        });
-      }
+    
+    // Add before expression node
+    const beforeNodeId = `before_${stepNumber}`;
+    nodes.push({
+      id: beforeNodeId,
+      label: beforeExpr,
+      type: 'expression',
+      value: beforeExpr,
+      color: '#f56565'
+    });
+    
+    // Add operation node
+    const operationNodeId = `operation_${stepNumber}`;
+    nodes.push({
+      id: operationNodeId,
+      label: operation,
+      type: 'operation',
+      confidence: confidence,
+      color: '#9f7aea'
+    });
+    
+    // Add after expression node
+    const afterNodeId = `after_${stepNumber}`;
+    nodes.push({
+      id: afterNodeId,
+      label: afterExpr,
+      type: 'result',
+      value: afterExpr,
+      color: '#48bb78'
+    });
+    
+    // Add explanation node if in educational mode
+    if (educationalMode) {
+      const explanationNodeId = `explanation_${stepNumber}`;
+      nodes.push({
+        id: explanationNodeId,
+        label: explanation,
+        type: 'step',
+        explanation: explanation,
+        color: '#ed8936'
+      });
+      
+      // Connect explanation to operation
+      edges.push({
+        source: operationNodeId,
+        target: explanationNodeId,
+        type: 'step',
+        label: 'explains'
+      });
     }
-
-    // Output layer (possible operations) with confidence scores
-    const operations = [
-      { name: 'COMBINE_LIKE_TERMS', confidence: 0.85, explanation: 'Combine similar terms' },
-      { name: 'DISTRIBUTE', confidence: 0.72, explanation: 'Apply distributive property' },
-      { name: 'SIMPLIFY', confidence: 0.91, explanation: 'Simplify the expression' },
-      { name: 'ADD_TO_BOTH_SIDES', confidence: 0.78, explanation: 'Add term to both sides' },
-      { name: 'SUBTRACT_FROM_BOTH_SIDES', confidence: 0.76, explanation: 'Subtract term from both sides' },
-      { name: 'MULTIPLY_BOTH_SIDES', confidence: 0.68, explanation: 'Multiply both sides by factor' },
-      { name: 'DIVIDE_BOTH_SIDES', confidence: 0.73, explanation: 'Divide both sides by factor' },
-      { name: 'MOVE_TERMS', confidence: 0.82, explanation: 'Move terms across equals sign' },
-      { name: 'APPLY_QUADRATIC_FORMULA', confidence: 0.45, explanation: 'Apply quadratic formula' },
-      { name: 'EXPAND', confidence: 0.79, explanation: 'Expand parentheses' },
-      { name: 'FACTOR', confidence: 0.67, explanation: 'Factor the expression' },
-      { name: 'SOLVE', confidence: 0.88, explanation: 'Solve for variable' }
-    ];
     
-    operations.forEach((op, index) => {
-      const nodeId = `output_${index}`;
-      nodes.push({
-        id: nodeId,
-        type: 'output',
-        label: op.name,
-        confidence: op.confidence,
-        layer: 4,
-        explanation: op.explanation
+    // Connect nodes
+    edges.push({
+      source: stepNodeId,
+      target: beforeNodeId,
+      type: 'step',
+      label: 'starts with'
+    });
+    
+    edges.push({
+      source: beforeNodeId,
+      target: operationNodeId,
+      type: 'transformation',
+      label: 'apply'
+    });
+    
+    edges.push({
+      source: operationNodeId,
+      target: afterNodeId,
+      type: 'transformation',
+      label: 'results in'
+    });
+    
+    // Connect to previous step if exists
+    if (stepNumber > 1) {
+      edges.push({
+        source: `after_${stepNumber - 1}`,
+        target: beforeNodeId,
+        type: 'step',
+        label: 'continues from'
       });
-    });
-
-    // Generate edges with attention weights
-    nodes.forEach(node => {
-      if (node.layer < 4) {
-        // Connect to next layer
-        const nextLayerNodes = nodes.filter(n => n.layer === node.layer + 1);
-        nextLayerNodes.forEach(target => {
-          const attention = Math.random() * 0.8 + 0.2;
-          edges.push({
-            source: node.id,
-            target: target.id,
-            weight: attention,
-            type: node.layer === 0 ? 'attention' : 'forward',
-            attention
-          });
-        });
-      }
-    });
-
-    return { nodes, edges };
+    }
+    
+    return {
+      stepNumber,
+      beforeExpression: beforeExpr,
+      afterExpression: afterExpr,
+      operation,
+      explanation,
+      confidence,
+      graphNodes: nodes,
+      graphEdges: edges
+    };
   };
 
-  // Enhanced GNN processing with step-by-step visualization
-  const animateGNNProcessing = async (expr: string) => {
+  // Enhanced step-by-step solving with educational visualization
+  const solveStepByStep = async (expr: string) => {
     setIsProcessing(true);
     setProcessingProgress(0);
+    setSolvingHistory([]);
     
-    // Step 1: Feature extraction (20%)
-    await new Promise(resolve => setTimeout(resolve, 300));
-    setProcessingProgress(20);
+    let currentExpr = expr;
+    let stepNumber = 1;
     
-    // Step 2: Graph encoding (40%)
-    await new Promise(resolve => setTimeout(resolve, 400));
-    setProcessingProgress(40);
-    
-    // Step 3: GNN prediction (60%)
-    const prediction = solver.predictNextStep(expr);
-    setPredictions([prediction]);
-    
-    if (onPrediction) {
-      onPrediction(prediction);
+    while (stepNumber <= 10) { // Limit to prevent infinite loops
+      setProcessingProgress((stepNumber - 1) * 10);
+      
+      // Check if solved
+      if (solver.isSolved(currentExpr)) {
+        break;
+      }
+      
+      // Get prediction
+      const prediction = solver.predictNextStep(currentExpr);
+      setPredictions(prev => [...prev, prediction]);
+      
+      if (onPrediction) {
+        onPrediction(prediction);
+      }
+      
+      // Apply operation
+      const step = solver.applyOperation(currentExpr, prediction);
+      setGnnSteps(prev => [...prev, step]);
+      
+      if (onStepComplete) {
+        onStepComplete(step);
+      }
+      
+      // Generate visualization for this step
+      const visualization = generateStepVisualization(
+        stepNumber,
+        currentExpr,
+        step.expression,
+        step.operation || 'UNKNOWN',
+        step.explanation,
+        prediction.confidence
+      );
+      
+      setSolvingHistory(prev => [...prev, visualization]);
+      setStepVisualizations(prev => [...prev, visualization]);
+      
+      // Update current expression
+      currentExpr = step.expression;
+      setCurrentExpression(currentExpr);
+      
+      // Check if operation was unsupported
+      if (step.operation === 'UNSUPPORTED') {
+        break;
+      }
+      
+      stepNumber++;
+      
+      // Add delay for visualization
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    await new Promise(resolve => setTimeout(resolve, 300));
-    setProcessingProgress(60);
-    
-    // Step 4: Operation application (80%)
-    const step = solver.applyOperation(expr, prediction);
-    setGnnSteps([step]);
-    
-    if (onStepComplete) {
-      onStepComplete(step);
-    }
-    
-    await new Promise(resolve => setTimeout(resolve, 200));
-    setProcessingProgress(80);
-    
-    // Step 5: Verification (100%)
-    const stepDetail: StepDetail = {
-      stepNumber: currentStep + 1,
-      operation: prediction.operation,
-      beforeExpression: expr,
-      afterExpression: step.expression,
-      confidence: prediction.confidence,
-      explanation: step.explanation,
-      timeMs: Date.now()
-    };
-    
-    setStepDetails(prev => [...prev, stepDetail]);
     setProcessingProgress(100);
-    
-    await new Promise(resolve => setTimeout(resolve, 100));
     setIsProcessing(false);
-    setProcessingProgress(0);
   };
 
-  // Render GNN graph
+  // Render the step-by-step solving visualization
   useEffect(() => {
-    if (!svgRef.current || !expression) return;
+    if (!svgRef.current || solvingHistory.length === 0) return;
     
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    const { nodes, edges } = generateGNNGraph(expression);
-    const width = 800;
-    const height = 500;
+    // Combine all nodes and edges from all steps
+    const allNodes: GraphNode[] = [];
+    const allEdges: GraphEdge[] = [];
+    
+    solvingHistory.forEach(step => {
+      allNodes.push(...step.graphNodes);
+      allEdges.push(...step.graphEdges);
+    });
 
-    // Set up simulation
-    const simulation = d3.forceSimulation(nodes as any)
-      .force('link', d3.forceLink(edges as any).id((d: any) => d.id).distance(80))
-      .force('charge', d3.forceManyBody().strength(-300))
+    const width = 1200;
+    const height = 800;
+
+    // Set up simulation with better layout for educational visualization
+    const simulation = d3.forceSimulation(allNodes as any)
+      .force('link', d3.forceLink(allEdges as any).id((d: any) => d.id).distance(120))
+      .force('charge', d3.forceManyBody().strength(-500))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('x', d3.forceX().x((d: any) => d.layer * 150 + 100))
-      .force('collision', d3.forceCollide().radius(25));
+      .force('x', d3.forceX().x((d: any) => {
+        // Position nodes by step number
+        if (d.stepNumber) {
+          return d.stepNumber * 200 + 100;
+        }
+        return width / 2;
+      }))
+      .force('y', d3.forceY().y((d: any) => {
+        // Position nodes by type
+        switch (d.type) {
+          case 'step': return 50;
+          case 'expression': return 200;
+          case 'operation': return 350;
+          case 'result': return 500;
+          default: return 650;
+        }
+      }))
+      .force('collision', d3.forceCollide().radius(40));
 
-    // Color scheme
+    // Color scheme for educational visualization
     const nodeColors = {
-      feature: '#4299e1',
-      hidden: '#9f7aea',
-      output: '#f56565',
-      input: '#48bb78'
+      step: '#4299e1',
+      expression: '#f56565',
+      operation: '#9f7aea',
+      result: '#48bb78'
     };
 
-    // Draw edges
-    svg.append('g')
+    // Draw edges with labels
+    const link = svg.append('g')
       .attr('stroke', '#999')
       .attr('stroke-opacity', 0.6)
       .selectAll('line')
-      .data(edges)
+      .data(allEdges)
       .join('line')
-      .attr('stroke-width', d => d.weight * 3);
+      .attr('stroke-width', d => (d.weight || 1) * 2)
+      .attr('marker-end', 'url(#arrow)');
 
-    // Draw nodes
+    // Add arrow marker
+    svg.append('defs').append('marker')
+      .attr('id', 'arrow')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 15)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#999');
+
+    // Draw nodes with enhanced styling
     const node = svg.append('g')
       .attr('stroke', '#fff')
       .attr('stroke-width', 2)
       .selectAll('g')
-      .data(nodes)
+      .data(allNodes)
       .join('g')
-      .call(d3.drag<any, GNNNode>()
+      .call(d3.drag<any, GraphNode>()
         .on('start', (event, d) => {
           if (!event.active) simulation.alphaTarget(0.3).restart();
           (d as any).fx = (d as any).x;
@@ -301,115 +357,309 @@ export const GNNVisualizer: React.FC<GNNVisualizerProps> = ({
           if (!event.active) simulation.alphaTarget(0);
           (d as any).fx = null;
           (d as any).fy = null;
-        })
-      );
+        }));
 
-    // Node shapes
-    node.each(function(d) {
-      const g = d3.select(this);
-      const color = nodeColors[d.type as keyof typeof nodeColors];
-      const radius = d.type === 'output' ? 20 : 15;
-      
-      g.append('circle')
-        .attr('r', radius)
-        .attr('fill', color)
-        .attr('opacity', d.value ? 0.7 + d.value * 0.3 : 0.8);
+    // Add circles for nodes
+    node.append('circle')
+      .attr('r', d => {
+        switch (d.type) {
+          case 'step': return 25;
+          case 'expression': return 35;
+          case 'operation': return 30;
+          case 'result': return 35;
+          default: return 20;
+        }
+      })
+      .attr('fill', d => d.color || nodeColors[d.type as keyof typeof nodeColors])
+      .on('click', (event, d) => setSelectedNode(d))
+      .on('mouseover', function(event, d) {
+        d3.select(this).attr('stroke-width', 4);
+        // Show tooltip
+        const tooltip = d3.select('body').append('div')
+          .attr('class', 'tooltip')
+          .style('position', 'absolute')
+          .style('background', 'rgba(0,0,0,0.8)')
+          .style('color', 'white')
+          .style('padding', '8px')
+          .style('border-radius', '4px')
+          .style('pointer-events', 'none');
+        
+        if (d.explanation) {
+          tooltip.html(`<strong>${d.label}</strong><br/>${d.explanation}`);
+        } else {
+          tooltip.html(d.label);
+        }
+        
+        tooltip.style('left', (event.pageX + 10) + 'px')
+               .style('top', (event.pageY - 10) + 'px');
+      })
+      .on('mouseout', function() {
+        d3.select(this).attr('stroke-width', 2);
+        d3.selectAll('.tooltip').remove();
+      });
 
-      // Add confidence indicator for output nodes
-      if (d.confidence && d.type === 'output') {
-        g.append('circle')
-          .attr('r', radius * (d.confidence || 0))
-          .attr('fill', 'none')
-          .attr('stroke', '#fbbf24')
-          .attr('stroke-width', 2)
-          .attr('opacity', 0.6);
-      }
-    });
-
-    // Node labels
+    // Add labels
     node.append('text')
-      .text(d => d.label)
+      .text(d => d.label.length > 20 ? d.label.substring(0, 17) + '...' : d.label)
       .attr('text-anchor', 'middle')
-      .attr('dy', '.35em')
-      .attr('font-size', 10)
-      .attr('fill', '#fff')
-      .attr('pointer-events', 'none');
+      .attr('dy', '0.35em')
+      .attr('font-size', '12px')
+      .attr('fill', 'white')
+      .attr('font-weight', 'bold');
 
-    // Layer labels
-    const layers = ['Features', 'Hidden 1', 'Hidden 2', 'Operations'];
-    layers.forEach((label, i) => {
-      svg.append('text')
-        .text(label)
-        .attr('x', i * 150 + 100)
-        .attr('y', 30)
-        .attr('text-anchor', 'middle')
-        .attr('font-size', 14)
-        .attr('font-weight', 'bold')
-        .attr('fill', '#374151');
-    });
+    // Add confidence indicators
+    if (showConfidence) {
+      node.filter(d => d.confidence !== undefined).append('circle')
+        .attr('r', 8)
+        .attr('cx', 25)
+        .attr('cy', -25)
+        .attr('fill', d => d3.interpolateRdYlGn(d.confidence || 0))
+        .attr('stroke', 'white')
+        .attr('stroke-width', 1);
+    }
 
-    // Animation
+    // Update positions on simulation tick
     simulation.on('tick', () => {
-      svg.selectAll('line')
+      link
         .attr('x1', (d: any) => d.source.x)
         .attr('y1', (d: any) => d.source.y)
         .attr('x2', (d: any) => d.target.x)
         .attr('y2', (d: any) => d.target.y);
-      
-      node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+
+      node
+        .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
     });
 
-    return () => {
-      simulation.stop();
-    };
+  }, [solvingHistory, showConfidence]);
+
+  // Start solving when expression changes
+  useEffect(() => {
+    if (expression && expression.trim()) {
+      solveStepByStep(expression);
+    }
   }, [expression]);
 
   return (
-    <div className="w-full">
-      <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-        <h3 className="text-lg font-semibold text-gray-800 mb-2">🧠 GNN Processing</h3>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => animateGNNProcessing(expression)}
-            disabled={isProcessing || !expression}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold shadow hover:bg-blue-700 transition disabled:opacity-50"
-          >
-            {isProcessing ? 'Processing...' : 'Run GNN Analysis'}
-          </button>
-          {predictions.length > 0 && (
-            <div className="text-sm text-gray-600">
-              <strong>Predicted:</strong> {predictions[0].operation} 
-              (confidence: {(predictions[0].confidence * 100).toFixed(1)}%)
-            </div>
-          )}
-        </div>
-        {predictions.length > 0 && (
-          <div className="mt-2 text-sm text-gray-700">
-            <strong>Reasoning:</strong> {predictions[0].reasoning}
+    <div className="gnn-visualizer">
+      <div className="controls">
+        <button 
+          onClick={() => solveStepByStep(expression)}
+          disabled={isProcessing}
+          className="solve-button"
+        >
+          {isProcessing ? 'Solving...' : 'Solve Step by Step'}
+        </button>
+        
+        {isProcessing && (
+          <div className="progress-bar">
+            <div 
+              className="progress-fill" 
+              style={{ width: `${processingProgress}%` }}
+            />
+            <span className="progress-text">{processingProgress}%</span>
           </div>
         )}
       </div>
-      
-      <div className="w-full flex justify-center">
-        <svg 
-          ref={svgRef} 
-          width={800} 
-          height={500} 
-          className="bg-white rounded-xl shadow-lg border border-gray-200" 
-        />
+
+      <div className="current-expression">
+        <h3>Current Expression:</h3>
+        <div className="expression-display">{currentExpression}</div>
       </div>
-      
-      {gnnSteps.length > 0 && (
-        <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <h4 className="font-semibold text-green-800 mb-2">GNN Step Result:</h4>
-          <div className="text-sm text-green-700">
-            <div><strong>Operation:</strong> {gnnSteps[0].operation}</div>
-            <div><strong>Before:</strong> {gnnSteps[0].beforeExpression}</div>
-            <div><strong>After:</strong> {gnnSteps[0].afterExpression}</div>
-            <div><strong>Confidence:</strong> {(gnnSteps[0].confidence * 100).toFixed(1)}%</div>
+
+      <div className="visualization-container">
+        <svg ref={svgRef} width="1200" height="800" />
+      </div>
+
+      {selectedNode && (
+        <div className="node-details">
+          <h4>Node Details:</h4>
+          <p><strong>Type:</strong> {selectedNode.type}</p>
+          <p><strong>Label:</strong> {selectedNode.label}</p>
+          {selectedNode.confidence !== undefined && (
+            <p><strong>Confidence:</strong> {(selectedNode.confidence * 100).toFixed(1)}%</p>
+          )}
+          {selectedNode.explanation && (
+            <p><strong>Explanation:</strong> {selectedNode.explanation}</p>
+          )}
+        </div>
+      )}
+
+      {showStepDetails && solvingHistory.length > 0 && (
+        <div className="step-details">
+          <h3>Solving Steps:</h3>
+          <div className="steps-list">
+            {solvingHistory.map((step, index) => (
+              <div key={index} className="step-item">
+                <div className="step-header">
+                  <span className="step-number">Step {step.stepNumber}</span>
+                  <span className="operation">{step.operation}</span>
+                  {showConfidence && (
+                    <span className="confidence">{(step.confidence * 100).toFixed(1)}%</span>
+                  )}
+                </div>
+                <div className="step-content">
+                  <div className="expression-before">{step.beforeExpression}</div>
+                  <div className="arrow">→</div>
+                  <div className="expression-after">{step.afterExpression}</div>
+                </div>
+                <div className="explanation">{step.explanation}</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        .gnn-visualizer {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .controls {
+          margin-bottom: 20px;
+          display: flex;
+          align-items: center;
+          gap: 20px;
+        }
+        
+        .solve-button {
+          padding: 10px 20px;
+          background: #4299e1;
+          color: white;
+          border: none;
+          border-radius: 5px;
+          cursor: pointer;
+          font-size: 16px;
+        }
+        
+        .solve-button:disabled {
+          background: #a0aec0;
+          cursor: not-allowed;
+        }
+        
+        .progress-bar {
+          width: 200px;
+          height: 20px;
+          background: #e2e8f0;
+          border-radius: 10px;
+          overflow: hidden;
+          position: relative;
+        }
+        
+        .progress-fill {
+          height: 100%;
+          background: #48bb78;
+          transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          font-size: 12px;
+          color: #2d3748;
+        }
+        
+        .current-expression {
+          margin-bottom: 20px;
+          padding: 15px;
+          background: #f7fafc;
+          border-radius: 8px;
+        }
+        
+        .expression-display {
+          font-family: 'Courier New', monospace;
+          font-size: 18px;
+          font-weight: bold;
+          color: #2d3748;
+        }
+        
+        .visualization-container {
+          margin-bottom: 20px;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          overflow: hidden;
+        }
+        
+        .node-details {
+          margin-bottom: 20px;
+          padding: 15px;
+          background: #edf2f7;
+          border-radius: 8px;
+        }
+        
+        .step-details {
+          margin-top: 20px;
+        }
+        
+        .steps-list {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+        }
+        
+        .step-item {
+          padding: 15px;
+          background: #f7fafc;
+          border-radius: 8px;
+          border-left: 4px solid #4299e1;
+        }
+        
+        .step-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+        }
+        
+        .step-number {
+          font-weight: bold;
+          color: #2d3748;
+        }
+        
+        .operation {
+          background: #9f7aea;
+          color: white;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 12px;
+        }
+        
+        .confidence {
+          background: #48bb78;
+          color: white;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 12px;
+        }
+        
+        .step-content {
+          display: flex;
+          align-items: center;
+          gap: 15px;
+          margin-bottom: 10px;
+        }
+        
+        .expression-before, .expression-after {
+          font-family: 'Courier New', monospace;
+          padding: 8px;
+          background: white;
+          border-radius: 4px;
+          border: 1px solid #e2e8f0;
+          flex: 1;
+        }
+        
+        .arrow {
+          font-size: 20px;
+          color: #4299e1;
+          font-weight: bold;
+        }
+        
+        .explanation {
+          color: #4a5568;
+          font-style: italic;
+        }
+      `}</style>
     </div>
   );
 };

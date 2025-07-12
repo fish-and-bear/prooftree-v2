@@ -388,7 +388,7 @@ export class GNNSolver {
   /**
    * Check if expression is solved
    */
-  private isSolved(expression: string): boolean {
+  isSolved(expression: string): boolean {
     // Simple heuristic: check if it's in the form x = value
     const match = expression.match(/^([a-zA-Z])\s*=\s*([^=]+)$/);
     return match !== null;
