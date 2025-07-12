@@ -119,12 +119,47 @@ def solve_step_by_step():
                         'error': 'Invalid equation format. Use exactly one equals sign.'
                     }), 400
                 
-                lhs = sp.parse_expr(parts[0].strip())
-                rhs = sp.parse_expr(parts[1].strip())
-                problem = Eq(lhs, rhs)
+                # Clean up the expression parts
+                lhs_str = parts[0].strip()
+                rhs_str = parts[1].strip()
+                
+                # Handle different power notations
+                lhs_str = lhs_str.replace('^', '**')
+                rhs_str = rhs_str.replace('^', '**')
+                
+                try:
+                    lhs = sp.parse_expr(lhs_str)
+                    rhs = sp.parse_expr(rhs_str)
+                    problem = Eq(lhs, rhs)
+                except Exception as parse_error:
+                    # Try alternative parsing
+                    try:
+                        # Handle implicit multiplication (e.g., 2x -> 2*x)
+                        lhs_str = lhs_str.replace('x', '*x').replace('**x', '^x')
+                        rhs_str = rhs_str.replace('x', '*x').replace('**x', '^x')
+                        lhs = sp.parse_expr(lhs_str)
+                        rhs = sp.parse_expr(rhs_str)
+                        problem = Eq(lhs, rhs)
+                    except:
+                        return jsonify({
+                            'success': False,
+                            'error': f'Failed to parse equation: {str(parse_error)}. Try using explicit operators (e.g., 2*x instead of 2x).'
+                        }), 400
             else:
                 # Parse as expression
-                problem = sp.parse_expr(expression)
+                expr_str = expression.replace('^', '**')
+                try:
+                    problem = sp.parse_expr(expr_str)
+                except Exception as parse_error:
+                    # Try alternative parsing
+                    try:
+                        expr_str = expr_str.replace('x', '*x').replace('**x', '^x')
+                        problem = sp.parse_expr(expr_str)
+                    except:
+                        return jsonify({
+                            'success': False,
+                            'error': f'Failed to parse expression: {str(parse_error)}. Try using explicit operators (e.g., 2*x instead of 2x).'
+                        }), 400
                 
         except Exception as e:
             return jsonify({
